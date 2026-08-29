@@ -78,6 +78,7 @@ const draftPathNodes = ref<PathNode[]>([])
 const pathPointer = ref<Point | null>(null)
 const selectedPointIndex = ref<number | null>(null)
 const selectedPathNodeIndex = ref<number | null>(null)
+const selectedGridAnnotationShapeId = ref<string | null>(null)
 const annotationHovered = ref(false)
 let resizeObserver: ResizeObserver | null = null
 
@@ -96,7 +97,6 @@ function clonePlain<T>(value: T): T {
 
 const fabricWidthPx = computed(() => fabric.value.widthCm * zoom.value)
 const fabricHeightPx = computed(() => fabric.value.heightCm * zoom.value)
-const showOutline = computed(() => viewMode.value !== 'grid')
 const showRasterFill = computed(() => viewMode.value !== 'outline')
 const showOutlineFill = computed(() => viewMode.value === 'overlay')
 const stageCursor = computed(() => {
@@ -218,13 +218,16 @@ function toggleAnnotationDirection(shapeId: string): void {
   )
 }
 
-const outlineShapingAnnotations = computed<OutlineShapingAnnotation[]>(() => {
-  if (viewMode.value !== 'outline') return []
+const shapingAnnotations = computed<OutlineShapingAnnotation[]>(() => {
+  if (viewMode.value !== 'outline' && viewMode.value !== 'grid') return []
   const planByShapeId = new Map(shapePlans.value.map((plan) => [plan.shapeId, plan]))
   const drafts: AnnotationDraft[] = []
   const viewportRight = stageSize.value.width - annotationViewportMargin
+  const annotatedShapes = viewMode.value === 'grid'
+    ? shapes.value.filter((shape) => shape.id === selectedGridAnnotationShapeId.value)
+    : shapes.value
 
-  for (const shape of shapes.value) {
+  for (const shape of annotatedShapes) {
     const shapePlan = planByShapeId.get(shape.id)
     if (!shapePlan) continue
     const bounds = getShapeBounds(shape)
@@ -359,16 +362,6 @@ function shapeConfig(shape: Shape): Record<string, unknown> {
         lineCap: 'round',
         lineJoin: 'round',
       }
-  }
-}
-
-function gridHitShapeConfig(shape: Shape): Record<string, unknown> {
-  return {
-    ...shapeConfig(shape),
-    stroke: 'rgba(0, 0, 0, 0.001)',
-    fill: 'rgba(0, 0, 0, 0.001)',
-    fillEnabled: shape.type !== 'path' || shape.closed,
-    hitStrokeWidth: 14,
   }
 }
 
@@ -520,11 +513,17 @@ function onMouseDown(event: KonvaEventObject<MouseEvent>): void {
     toggleAnnotationDirection(name.slice('outline-direction:'.length))
     return
   }
+
+  if (viewMode.value === 'grid' && name.startsWith('shape:')) {
+    selectedGridAnnotationShapeId.value = name.slice('shape:'.length)
+  }
+
   const isPrimaryBackgroundDrag =
     activeTool.value === 'select' && event.evt.button === 0 && (name === '' || name === 'fabric')
   if (activeTool.value === 'pan' || event.evt.button === 1 || isPrimaryBackgroundDrag) {
     if (isPrimaryBackgroundDrag) {
       selectedShapeId.value = null
+      if (viewMode.value === 'grid') selectedGridAnnotationShapeId.value = null
       selectedPointIndex.value = null
       selectedPathNodeIndex.value = null
     }
@@ -594,6 +593,7 @@ function onMouseDown(event: KonvaEventObject<MouseEvent>): void {
     return
   }
   selectedShapeId.value = null
+  if (viewMode.value === 'grid') selectedGridAnnotationShapeId.value = null
   selectedPointIndex.value = null
   selectedPathNodeIndex.value = null
 }
@@ -913,6 +913,17 @@ watch(selectedShapeId, () => {
   selectedPointIndex.value = null
   selectedPathNodeIndex.value = null
 })
+watch(viewMode, (mode, previousMode) => {
+  if (mode === 'grid' && previousMode !== 'grid') selectedGridAnnotationShapeId.value = null
+})
+watch(() => shapes.value.map((shape) => shape.id), (shapeIds) => {
+  if (
+    selectedGridAnnotationShapeId.value
+    && !shapeIds.includes(selectedGridAnnotationShapeId.value)
+  ) {
+    selectedGridAnnotationShapeId.value = null
+  }
+})
 
 defineExpose({ fitCanvas })
 </script>
@@ -941,24 +952,12 @@ defineExpose({ fitCanvas })
           <v-line v-for="(y, index) in horizontalLines" :key="`h-${index}`"
             :config="{ points: [0, y, fabricWidthPx, y], stroke: index % 5 === 0 ? '#a59d90' : '#d8d2c8', strokeWidth: index % 5 === 0 ? 0.8 : 0.45, listening: false }" />
 
-          <template v-if="viewMode === 'grid'">
-            <template v-for="shape in shapes" :key="`grid-hit-${shape.id}`">
-              <v-rect v-if="shape.type === 'rectangle'" :config="gridHitShapeConfig(shape)" />
-              <v-circle v-else-if="shape.type === 'circle'" :config="gridHitShapeConfig(shape)" />
-              <v-ellipse v-else-if="shape.type === 'ellipse'" :config="gridHitShapeConfig(shape)" />
-              <v-path v-else-if="shape.type === 'path'" :config="gridHitShapeConfig(shape)" />
-              <v-line v-else :config="gridHitShapeConfig(shape)" />
-            </template>
-          </template>
-
-          <template v-if="showOutline">
-            <template v-for="shape in shapes" :key="shape.id">
-              <v-rect v-if="shape.type === 'rectangle'" :config="shapeConfig(shape)" />
-              <v-circle v-else-if="shape.type === 'circle'" :config="shapeConfig(shape)" />
-              <v-ellipse v-else-if="shape.type === 'ellipse'" :config="shapeConfig(shape)" />
-              <v-path v-else-if="shape.type === 'path'" :config="shapeConfig(shape)" />
-              <v-line v-else :config="shapeConfig(shape)" />
-            </template>
+          <template v-for="shape in shapes" :key="shape.id">
+            <v-rect v-if="shape.type === 'rectangle'" :config="shapeConfig(shape)" />
+            <v-circle v-else-if="shape.type === 'circle'" :config="shapeConfig(shape)" />
+            <v-ellipse v-else-if="shape.type === 'ellipse'" :config="shapeConfig(shape)" />
+            <v-path v-else-if="shape.type === 'path'" :config="shapeConfig(shape)" />
+            <v-line v-else :config="shapeConfig(shape)" />
           </template>
 
           <template v-if="selectionRect">
@@ -1032,14 +1031,14 @@ defineExpose({ fitCanvas })
           }" />
         </v-group>
 
-        <template v-if="viewMode === 'outline'">
-          <v-line v-for="annotation in outlineShapingAnnotations" :key="`${annotation.key}-connector`"
+        <template v-if="viewMode === 'outline' || viewMode === 'grid'">
+          <v-line v-for="annotation in shapingAnnotations" :key="`${annotation.key}-connector`"
             :config="{
               points: annotation.connectorPoints,
               stroke: '#b24631', strokeWidth: 1, opacity: 0.58,
               dash: [3, 3], listening: false,
             }" />
-          <v-group v-for="annotation in outlineShapingAnnotations" :key="annotation.key"
+          <v-group v-for="annotation in shapingAnnotations" :key="annotation.key"
             :config="{ x: annotation.x, y: annotation.y, listening: activeTool !== 'path' }">
             <v-rect :config="{
               name: `outline-direction:${annotation.shapeId}`,
@@ -1068,6 +1067,11 @@ defineExpose({ fitCanvas })
     <div class="canvas-hud canvas-hud--left">
       <b>{{ fabricGrid.columnCount }} 针 × {{ fabricGrid.rowCount }} 行</b>
       <span>原点在左下角 · 单位 cm</span>
+    </div>
+    <div v-if="viewMode === 'grid' && !selectedGridAnnotationShapeId"
+      class="canvas-hud canvas-hud--selection-tip">
+      <b>点击红色轮廓</b>
+      <span>查看该对象的加减针规律与编织方向</span>
     </div>
     <div v-if="activeTool === 'polygon'" class="polygon-hint">
       <b>多边形描点</b>

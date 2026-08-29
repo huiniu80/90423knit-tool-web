@@ -231,6 +231,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .knitting-canvas:focus-visible { box-shadow: inset 0 0 0 2px #4d8b7c; }
 .canvas-hud { position: absolute; pointer-events: none; padding: 8px 11px; border: 1px solid rgba(95,85,73,.14); border-radius: 7px; color: #5a5f59; background: rgba(255,253,248,.9); box-shadow: 0 3px 12px rgba(55,47,38,.08); backdrop-filter: blur(6px); }
 .canvas-hud--left { left: 14px; bottom: 14px; }
+.canvas-hud--selection-tip { top: 12px; left: 50%; transform: translateX(-50%); }
 .canvas-hud b, .canvas-hud span { display: block; }
 .canvas-hud b { color: var(--forest); font-size: 10px; }
 .canvas-hud span { margin-top: 2px; font-size: 8px; }
