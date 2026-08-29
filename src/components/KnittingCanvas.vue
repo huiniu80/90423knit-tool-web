@@ -96,7 +96,6 @@ const fabricWidthPx = computed(() => fabric.value.widthCm * zoom.value)
 const fabricHeightPx = computed(() => fabric.value.heightCm * zoom.value)
 const showOutline = computed(() => viewMode.value !== 'grid')
 const showRasterFill = computed(() => viewMode.value !== 'outline')
-const showGrid = computed(() => viewMode.value !== 'outline')
 const showOutlineFill = computed(() => viewMode.value === 'overlay')
 const stageCursor = computed(() => {
   if (interaction.value?.kind === 'pan') return 'grabbing'
@@ -901,12 +900,10 @@ defineExpose({ fitCanvas })
             }" />
           </template>
 
-          <template v-if="showGrid">
-            <v-line v-for="(x, index) in verticalLines" :key="`v-${index}`"
-              :config="{ points: [x, 0, x, fabricHeightPx], stroke: index % 5 === 0 ? '#a59d90' : '#d8d2c8', strokeWidth: index % 5 === 0 ? 0.8 : 0.45, listening: false }" />
-            <v-line v-for="(y, index) in horizontalLines" :key="`h-${index}`"
-              :config="{ points: [0, y, fabricWidthPx, y], stroke: index % 5 === 0 ? '#a59d90' : '#d8d2c8', strokeWidth: index % 5 === 0 ? 0.8 : 0.45, listening: false }" />
-          </template>
+          <v-line v-for="(x, index) in verticalLines" :key="`v-${index}`"
+            :config="{ points: [x, 0, x, fabricHeightPx], stroke: index % 5 === 0 ? '#a59d90' : '#d8d2c8', strokeWidth: index % 5 === 0 ? 0.8 : 0.45, listening: false }" />
+          <v-line v-for="(y, index) in horizontalLines" :key="`h-${index}`"
+            :config="{ points: [0, y, fabricWidthPx, y], stroke: index % 5 === 0 ? '#a59d90' : '#d8d2c8', strokeWidth: index % 5 === 0 ? 0.8 : 0.45, listening: false }" />
 
           <template v-if="showOutline">
             <template v-for="shape in shapes" :key="shape.id">
