@@ -106,7 +106,7 @@ function planTotalText(plan: EdgeShapingPlan): string {
           <span><b>{{ instructions.length }}</b> 行</span>
           <span><b>{{ totalStitches }}</b> 累计针次</span>
         </div>
-        <div class="segmented-control direction-control">
+        <div class="segmented-control direction-control" aria-label="所选对象编织方向">
           <button :class="{ active: direction === 'bottom-up' }" @click="direction = 'bottom-up'">↑ 从下往上</button>
           <button :class="{ active: direction === 'top-down' }" @click="direction = 'top-down'">↓ 从上往下</button>
         </div>

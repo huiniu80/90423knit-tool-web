@@ -21,6 +21,7 @@ export interface ShapePlan {
   shapeId: string
   shapeName?: string
   shapeType: Shape['type']
+  direction: KnitDirection
   rasterRows: RasterRow[]
   instructions: KnittingInstruction[]
   totalStitches: number
@@ -28,14 +29,17 @@ export interface ShapePlan {
 }
 
 export interface KnittingProject {
-  version: 2
+  version: 3
   gauge: GaugeInput
   canvas: FabricCanvas
-  direction: KnitDirection
+  shapeDirections: Record<string, KnitDirection>
   rasterOptions: RasterOptions
   shapes: Shape[]
 }
 
-export type ImportableKnittingProject = Omit<KnittingProject, 'version'> & {
+interface LegacyKnittingProject extends Omit<KnittingProject, 'version' | 'shapeDirections'> {
   version: 1 | 2
+  direction: KnitDirection
 }
+
+export type ImportableKnittingProject = KnittingProject | LegacyKnittingProject

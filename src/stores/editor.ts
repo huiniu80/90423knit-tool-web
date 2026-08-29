@@ -69,7 +69,7 @@ export const useEditorStore = defineStore('editor', () => {
   const selectedShapeId = ref<string | null>(shapes.value[0]?.id ?? null)
   const selectedPlanShapeId = ref<string | null>(shapes.value[0]?.id ?? null)
   const zoom = ref(20)
-  const direction = ref<KnitDirection>('bottom-up')
+  const shapeDirections = ref<Record<string, KnitDirection>>({})
   const rasterOptions = ref<RasterOptions>({
     mode: 'center',
     symmetryOptimization: true,
@@ -89,13 +89,27 @@ export const useEditorStore = defineStore('editor', () => {
   const rasterRows = computed(() =>
     rasterizeShapes(shapes.value, gauge.value, fabric.value, rasterOptions.value),
   )
+  function directionForShape(shapeId: string): KnitDirection {
+    return shapeDirections.value[shapeId] ?? 'bottom-up'
+  }
+
+  const direction = computed<KnitDirection>({
+    get: () => selectedPlanShapeId.value
+      ? directionForShape(selectedPlanShapeId.value)
+      : 'bottom-up',
+    set: (nextDirection) => {
+      if (selectedPlanShapeId.value) setShapeDirection(selectedPlanShapeId.value, nextDirection)
+    },
+  })
   const shapePlans = computed<ShapePlan[]>(() => shapes.value.map((shape) => {
     const rows = rasterize(shape, gauge.value, fabric.value, rasterOptions.value)
-    const planInstructions = generateInstructions(rows, direction.value)
+    const shapeDirection = directionForShape(shape.id)
+    const planInstructions = generateInstructions(rows, shapeDirection)
     return {
       shapeId: shape.id,
       shapeName: shape.name,
       shapeType: shape.type,
+      direction: shapeDirection,
       rasterRows: rows,
       instructions: planInstructions,
       totalStitches: planInstructions.reduce((sum, item) => sum + item.stitchCount, 0),
@@ -154,6 +168,14 @@ export const useEditorStore = defineStore('editor', () => {
     selectedShapeId.value = shape.id
     selectedPlanShapeId.value = shape.id
     activeTool.value = 'select'
+  }
+
+  function setShapeDirection(shapeId: string, nextDirection: KnitDirection): void {
+    if (!shapes.value.some((shape) => shape.id === shapeId)) return
+    shapeDirections.value = {
+      ...shapeDirections.value,
+      [shapeId]: nextDirection,
+    }
   }
 
   function addDefaultShape(type: Exclude<ShapeType, 'polygon' | 'path'>): void {
@@ -236,18 +258,24 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   function exportProject(): KnittingProject {
+    const exportedDirections = Object.fromEntries(
+      shapes.value.map((shape) => [shape.id, directionForShape(shape.id)]),
+    )
     return {
-      version: 2,
+      version: 3,
       gauge: clonePlain(gaugeInput.value),
       canvas: clonePlain(fabric.value),
-      direction: direction.value,
+      shapeDirections: exportedDirections,
       rasterOptions: clonePlain(rasterOptions.value),
       shapes: cloneShapes(shapes.value),
     }
   }
 
   function importProject(project: ImportableKnittingProject): void {
-    if ((project.version !== 1 && project.version !== 2) || !Array.isArray(project.shapes)) {
+    if (
+      (project.version !== 1 && project.version !== 2 && project.version !== 3)
+      || !Array.isArray(project.shapes)
+    ) {
       throw new Error('不支持的项目文件版本')
     }
     if (project.version === 1 && project.shapes.some((shape) => shape.type === 'path')) {
@@ -258,10 +286,22 @@ export const useEditorStore = defineStore('editor', () => {
     }
     calculateGauge(project.gauge)
     calculateFabricGrid(project.canvas, calculateGauge(project.gauge))
+    const importedDirections = project.version === 3
+      ? project.shapeDirections
+      : Object.fromEntries(project.shapes.map((shape) => [shape.id, project.direction]))
+    if (
+      !importedDirections
+      || typeof importedDirections !== 'object'
+      || Object.values(importedDirections).some(
+        (value) => value !== 'bottom-up' && value !== 'top-down',
+      )
+    ) {
+      throw new Error('编织方向数据无效')
+    }
     pushUndo(shapes.value)
     gaugeInput.value = clonePlain(project.gauge)
     fabric.value = clonePlain(project.canvas)
-    direction.value = project.direction
+    shapeDirections.value = clonePlain(importedDirections)
     rasterOptions.value = clonePlain(project.rasterOptions)
     shapes.value = cloneShapes(project.shapes)
     selectedShapeId.value = shapes.value[0]?.id ?? null
@@ -276,6 +316,7 @@ export const useEditorStore = defineStore('editor', () => {
     selectedPlanShapeId,
     zoom,
     direction,
+    shapeDirections,
     rasterOptions,
     activeTool,
     viewMode,
@@ -294,6 +335,7 @@ export const useEditorStore = defineStore('editor', () => {
     commitShapeMutation,
     replaceShape,
     addShape,
+    setShapeDirection,
     addDefaultShape,
     addPolygon,
     addPath,

@@ -88,13 +88,31 @@ describe('Editor Store', () => {
     expect(store.selectedPlanShapeId).toBe(project.shapes[0]?.id)
   })
 
-  it('导出数据使用 version 2 格式并可再次导入', () => {
+  it('每个轮廓对象使用独立方向，新对象默认自下而上', () => {
     const store = useEditorStore()
+    const firstShapeId = store.shapes[0]!.id
+    expect(store.direction).toBe('bottom-up')
+    store.direction = 'top-down'
+    expect(store.shapePlans.find((plan) => plan.shapeId === firstShapeId)?.direction).toBe('top-down')
+
+    store.addDefaultShape('rectangle')
+    const rectangleId = store.selectedShapeId!
+    expect(store.direction).toBe('bottom-up')
+    expect(store.shapePlans.find((plan) => plan.shapeId === rectangleId)?.direction).toBe('bottom-up')
+    expect(store.shapePlans.find((plan) => plan.shapeId === firstShapeId)?.direction).toBe('top-down')
+
+    store.setShapeDirection(rectangleId, 'top-down')
+    expect(store.direction).toBe('top-down')
+  })
+
+  it('导出数据使用 version 3 格式并保留各对象方向', () => {
+    const store = useEditorStore()
+    const firstShapeId = store.shapes[0]!.id
     store.direction = 'top-down'
     const project = store.exportProject()
 
-    expect(project.version).toBe(2)
-    expect(project.direction).toBe('top-down')
+    expect(project.version).toBe(3)
+    expect(project.shapeDirections[firstShapeId]).toBe('top-down')
 
     store.shapes = []
     store.importProject(project)
@@ -105,17 +123,26 @@ describe('Editor Store', () => {
   it('拒绝不支持的项目版本', () => {
     const store = useEditorStore()
     const project = store.exportProject()
-    expect(() => store.importProject({ ...project, version: 3 } as never)).toThrow(
+    expect(() => store.importProject({ ...project, version: 4 } as never)).toThrow(
       '不支持的项目文件版本',
     )
   })
 
-  it('继续接受 version 1 项目文件', () => {
+  it('继续接受 version 1 项目文件并迁移全局方向', () => {
     const store = useEditorStore()
-    const project = { ...store.exportProject(), version: 1 as const }
+    const current = store.exportProject()
+    const project = {
+      version: 1 as const,
+      gauge: current.gauge,
+      canvas: current.canvas,
+      direction: 'top-down' as const,
+      rasterOptions: current.rasterOptions,
+      shapes: current.shapes,
+    }
     store.shapes = []
     store.importProject(project)
     expect(store.shapes.length).toBeGreaterThan(0)
+    expect(store.shapePlans.every((plan) => plan.direction === 'top-down')).toBe(true)
   })
 
   it('路径创建和控制点修改可撤销与重做', () => {

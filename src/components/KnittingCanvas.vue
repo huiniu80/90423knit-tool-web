@@ -38,6 +38,7 @@ type Interaction =
 
 interface AnnotationDraft {
   key: string
+  shapeId: string
   side: ShapingSide
   anchorX: number
   anchorY: number
@@ -77,6 +78,7 @@ const draftPathNodes = ref<PathNode[]>([])
 const pathPointer = ref<Point | null>(null)
 const selectedPointIndex = ref<number | null>(null)
 const selectedPathNodeIndex = ref<number | null>(null)
+const annotationHovered = ref(false)
 let resizeObserver: ResizeObserver | null = null
 
 const canvasBoundaryPadding = 24
@@ -98,6 +100,7 @@ const showOutline = computed(() => viewMode.value !== 'grid')
 const showRasterFill = computed(() => viewMode.value !== 'outline')
 const showOutlineFill = computed(() => viewMode.value === 'overlay')
 const stageCursor = computed(() => {
+  if (annotationHovered.value) return 'pointer'
   if (interaction.value?.kind === 'pan') return 'grabbing'
   if (activeTool.value === 'pan') return 'grab'
   if (activeTool.value === 'polygon' || activeTool.value === 'path') return 'crosshair'
@@ -202,6 +205,19 @@ function connectorPoints(
   return [annotation.anchorX, annotation.anchorY, endX, endY]
 }
 
+function directionLabel(direction: (typeof shapePlans.value)[number]['direction']): string {
+  return direction === 'bottom-up' ? '↑ 下→上' : '↓ 上→下'
+}
+
+function toggleAnnotationDirection(shapeId: string): void {
+  const plan = shapePlans.value.find((item) => item.shapeId === shapeId)
+  if (!plan) return
+  store.setShapeDirection(
+    shapeId,
+    plan.direction === 'bottom-up' ? 'top-down' : 'bottom-up',
+  )
+}
+
 const outlineShapingAnnotations = computed<OutlineShapingAnnotation[]>(() => {
   if (viewMode.value !== 'outline') return []
   const planByShapeId = new Map(shapePlans.value.map((plan) => [plan.shapeId, plan]))
@@ -219,10 +235,12 @@ const outlineShapingAnnotations = computed<OutlineShapingAnnotation[]>(() => {
       const anchorX = pan.value.x + boundaryXcm * zoom.value
       const anchorY = pan.value.y + (fabric.value.heightCm - centerYcm) * zoom.value
       const edgePlan = generateEdgeShapingPlan(shapePlan.instructions, side)
-      const lines = edgeShapingPlanToLabelLines(
+      const ruleLines = edgeShapingPlanToLabelLines(
         edgePlan,
         shapePlan.instructions.length > 0,
       )
+      const sideLabel = side === 'left' ? '左侧' : '右侧'
+      const lines = [`${sideLabel} · ${directionLabel(shapePlan.direction)}`, ...ruleLines]
       const height = annotationPaddingY * 2 + lines.length * annotationLineHeight
       const outwardX = side === 'left'
         ? anchorX - annotationBoundaryGap - annotationWidth
@@ -235,6 +253,7 @@ const outlineShapingAnnotations = computed<OutlineShapingAnnotation[]>(() => {
 
       drafts.push({
         key: `${shape.id}-${side}`,
+        shapeId: shape.id,
         side,
         anchorX,
         anchorY,
@@ -487,6 +506,10 @@ function onMouseDown(event: KonvaEventObject<MouseEvent>): void {
   if (!pointer) return
 
   const name = targetName(event)
+  if (name.startsWith('outline-direction:')) {
+    toggleAnnotationDirection(name.slice('outline-direction:'.length))
+    return
+  }
   const isPrimaryBackgroundDrag =
     activeTool.value === 'select' && event.evt.button === 0 && (name === '' || name === 'fabric')
   if (activeTool.value === 'pan' || event.evt.button === 1 || isPrimaryBackgroundDrag) {
@@ -569,6 +592,7 @@ function onMouseMove(event: KonvaEventObject<MouseEvent>): void {
   const pointer = pointerFromEvent(event)
   const current = interaction.value
   if (!pointer) return
+  annotationHovered.value = targetName(event).startsWith('outline-direction:')
   pathPointer.value = activeTool.value === 'path' ? worldFromScreen(pointer, true) : null
   if (!current) return
 
@@ -639,10 +663,12 @@ function endInteraction(): void {
 
 function onMouseLeave(): void {
   pathPointer.value = null
+  annotationHovered.value = false
   endInteraction()
 }
 
 function onStageClick(event: KonvaEventObject<MouseEvent>): void {
+  if (targetName(event).startsWith('outline-direction:')) return
   if (activeTool.value !== 'polygon' && activeTool.value !== 'path') return
   const pointer = pointerFromEvent(event)
   if (!pointer) return
@@ -996,12 +1022,13 @@ defineExpose({ fitCanvas })
               dash: [3, 3], listening: false,
             }" />
           <v-group v-for="annotation in outlineShapingAnnotations" :key="annotation.key"
-            :config="{ x: annotation.x, y: annotation.y, listening: false }">
+            :config="{ x: annotation.x, y: annotation.y, listening: true }">
             <v-rect :config="{
+              name: `outline-direction:${annotation.shapeId}`,
               width: annotation.width, height: annotation.height,
               fill: 'rgba(255, 253, 248, 0.96)', stroke: '#d8c9bd', strokeWidth: 1,
               cornerRadius: 6, shadowColor: '#4a3f35', shadowBlur: 7,
-              shadowOpacity: 0.12, shadowOffsetY: 2, listening: false,
+              shadowOpacity: 0.12, shadowOffsetY: 2, listening: true,
             }" />
             <v-text v-for="(line, lineIndex) in annotation.lines" :key="`${annotation.key}-${lineIndex}`"
               :config="{
@@ -1010,9 +1037,9 @@ defineExpose({ fitCanvas })
                 width: annotation.width - annotationPaddingX * 2,
                 height: annotationLineHeight,
                 text: line,
-                fill: line.startsWith('加 ') ? '#237351' : line.startsWith('减 ') ? '#b24631' : '#6f746f',
+                fill: lineIndex === 0 ? '#287d72' : line.startsWith('加 ') ? '#237351' : line.startsWith('减 ') ? '#b24631' : '#6f746f',
                 fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                fontSize: 10, fontStyle: line.startsWith('加 ') || line.startsWith('减 ') ? 'bold' : 'normal',
+                fontSize: 10, fontStyle: lineIndex === 0 || line.startsWith('加 ') || line.startsWith('减 ') ? 'bold' : 'normal',
                 verticalAlign: 'middle', listening: false,
               }" />
           </v-group>
