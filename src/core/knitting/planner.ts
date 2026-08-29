@@ -3,6 +3,7 @@ import type {
   EdgeShapingPlan,
   KnitDirection,
   KnittingInstruction,
+  ShapingRule,
   ShapingOperation,
   ShapingSide,
 } from './planner.types'
@@ -130,4 +131,19 @@ export function generateEdgeShapingPlan(
     totalDecreasedStitches,
     supported: true,
   }
+}
+
+export function shapingRuleToLabel(rule: ShapingRule): string {
+  const operation = rule.operation === 'increase' ? '加' : '减'
+  return `${operation} ${rule.everyRows}-${rule.stitchCount}-${rule.repeatCount}`
+}
+
+export function edgeShapingPlanToLabelLines(
+  plan: EdgeShapingPlan,
+  hasInstructions: boolean,
+): string[] {
+  if (!hasInstructions) return ['未落入针格']
+  if (!plan.supported) return ['暂不支持归纳']
+  if (!plan.rules.length) return ['不加不减']
+  return plan.rules.map(shapingRuleToLabel)
 }

@@ -19,6 +19,11 @@ import {
   pathSegmentCount,
   splitPathSegment,
 } from '../core/geometry/path'
+import {
+  edgeShapingPlanToLabelLines,
+  generateEdgeShapingPlan,
+} from '../core/knitting/planner'
+import type { ShapingSide } from '../core/knitting/planner.types'
 import { useEditorStore } from '../stores/editor'
 
 type Corner = 'nw' | 'ne' | 'se' | 'sw'
@@ -31,6 +36,23 @@ type Interaction =
   | { kind: 'path-control'; nodeIndex: number; control: 'inControl' | 'outControl'; shape: PathShape }
   | { kind: 'path-midpoint'; segmentIndex: number; shape: PathShape }
 
+interface AnnotationDraft {
+  key: string
+  side: ShapingSide
+  anchorX: number
+  anchorY: number
+  x: number
+  preferredY: number
+  width: number
+  height: number
+  lines: string[]
+}
+
+interface OutlineShapingAnnotation extends Omit<AnnotationDraft, 'preferredY'> {
+  y: number
+  connectorPoints: number[]
+}
+
 const store = useEditorStore()
 const {
   fabric,
@@ -38,6 +60,7 @@ const {
   gauge,
   rasterRows,
   shapes,
+  shapePlans,
   selectedShape,
   selectedShapeId,
   activeTool,
@@ -57,6 +80,13 @@ const selectedPathNodeIndex = ref<number | null>(null)
 let resizeObserver: ResizeObserver | null = null
 
 const canvasBoundaryPadding = 24
+const annotationWidth = 104
+const annotationLineHeight = 14
+const annotationPaddingX = 8
+const annotationPaddingY = 6
+const annotationBoundaryGap = 10
+const annotationCollisionGap = 6
+const annotationViewportMargin = 8
 
 function clonePlain<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -65,7 +95,9 @@ function clonePlain<T>(value: T): T {
 const fabricWidthPx = computed(() => fabric.value.widthCm * zoom.value)
 const fabricHeightPx = computed(() => fabric.value.heightCm * zoom.value)
 const showOutline = computed(() => viewMode.value !== 'grid')
-const showRaster = computed(() => viewMode.value !== 'outline')
+const showRasterFill = computed(() => viewMode.value !== 'outline')
+const showGrid = computed(() => viewMode.value !== 'outline')
+const showOutlineFill = computed(() => viewMode.value === 'overlay')
 const stageCursor = computed(() => {
   if (interaction.value?.kind === 'pan') return 'grabbing'
   if (activeTool.value === 'pan') return 'grab'
@@ -97,6 +129,136 @@ const rasterBands = computed(() =>
     })),
   ),
 )
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(Math.max(value, minimum), Math.max(minimum, maximum))
+}
+
+function annotationsOverlapHorizontally(
+  left: Pick<AnnotationDraft, 'x' | 'width'>,
+  right: Pick<AnnotationDraft, 'x' | 'width'>,
+): boolean {
+  return left.x < right.x + right.width + annotationCollisionGap
+    && left.x + left.width + annotationCollisionGap > right.x
+}
+
+function layoutAnnotationSide(drafts: AnnotationDraft[]): Array<AnnotationDraft & { y: number }> {
+  const top = annotationViewportMargin
+  const bottom = stageSize.value.height - annotationViewportMargin
+  const placed = [...drafts]
+    .sort((left, right) => left.preferredY - right.preferredY)
+    .map((draft) => ({
+      ...draft,
+      y: clamp(draft.preferredY, top, bottom - draft.height),
+    }))
+
+  placed.forEach((current, index) => {
+    for (let previousIndex = 0; previousIndex < index; previousIndex += 1) {
+      const previous = placed[previousIndex]
+      if (!previous || !annotationsOverlapHorizontally(previous, current)) continue
+      if (current.y < previous.y + previous.height + annotationCollisionGap) {
+        current.y = previous.y + previous.height + annotationCollisionGap
+      }
+    }
+  })
+
+  const lastBottom = placed.reduce(
+    (maximum, item) => Math.max(maximum, item.y + item.height),
+    top,
+  )
+  const upwardShift = Math.max(0, lastBottom - bottom)
+  if (upwardShift) {
+    placed.forEach((item) => {
+      item.y -= upwardShift
+    })
+  }
+  const firstTop = placed.reduce((minimum, item) => Math.min(minimum, item.y), bottom)
+  const downwardShift = Math.max(0, top - firstTop)
+  if (downwardShift) {
+    placed.forEach((item) => {
+      item.y += downwardShift
+    })
+  }
+
+  return placed
+}
+
+function connectorPoints(
+  annotation: AnnotationDraft & { y: number },
+): number[] {
+  let endX: number
+  if (annotation.anchorX <= annotation.x) endX = annotation.x
+  else if (annotation.anchorX >= annotation.x + annotation.width) {
+    endX = annotation.x + annotation.width
+  } else {
+    endX = annotation.side === 'left'
+      ? annotation.x
+      : annotation.x + annotation.width
+  }
+  const endY = clamp(
+    annotation.anchorY,
+    annotation.y + annotationPaddingY,
+    annotation.y + annotation.height - annotationPaddingY,
+  )
+  return [annotation.anchorX, annotation.anchorY, endX, endY]
+}
+
+const outlineShapingAnnotations = computed<OutlineShapingAnnotation[]>(() => {
+  if (viewMode.value !== 'outline') return []
+  const planByShapeId = new Map(shapePlans.value.map((plan) => [plan.shapeId, plan]))
+  const drafts: AnnotationDraft[] = []
+  const viewportRight = stageSize.value.width - annotationViewportMargin
+
+  for (const shape of shapes.value) {
+    const shapePlan = planByShapeId.get(shape.id)
+    if (!shapePlan) continue
+    const bounds = getShapeBounds(shape)
+    const centerYcm = bounds.y + bounds.height / 2
+
+    for (const side of ['left', 'right'] as const) {
+      const boundaryXcm = side === 'left' ? bounds.x : bounds.x + bounds.width
+      const anchorX = pan.value.x + boundaryXcm * zoom.value
+      const anchorY = pan.value.y + (fabric.value.heightCm - centerYcm) * zoom.value
+      const edgePlan = generateEdgeShapingPlan(shapePlan.instructions, side)
+      const lines = edgeShapingPlanToLabelLines(
+        edgePlan,
+        shapePlan.instructions.length > 0,
+      )
+      const height = annotationPaddingY * 2 + lines.length * annotationLineHeight
+      const outwardX = side === 'left'
+        ? anchorX - annotationBoundaryGap - annotationWidth
+        : anchorX + annotationBoundaryGap
+      const inwardX = side === 'left'
+        ? anchorX + annotationBoundaryGap
+        : anchorX - annotationBoundaryGap - annotationWidth
+      const outwardFits = outwardX >= annotationViewportMargin
+        && outwardX + annotationWidth <= viewportRight
+
+      drafts.push({
+        key: `${shape.id}-${side}`,
+        side,
+        anchorX,
+        anchorY,
+        x: clamp(
+          outwardFits ? outwardX : inwardX,
+          annotationViewportMargin,
+          viewportRight - annotationWidth,
+        ),
+        preferredY: anchorY - height / 2,
+        width: annotationWidth,
+        height,
+        lines,
+      })
+    }
+  }
+
+  return (['left', 'right'] as const).flatMap((side) =>
+    layoutAnnotationSide(drafts.filter((draft) => draft.side === side)).map((annotation) => ({
+      ...annotation,
+      connectorPoints: connectorPoints(annotation),
+    })),
+  )
+})
 
 function toCanvasPoint(point: Point): Point {
   return {
@@ -140,7 +302,8 @@ function shapeConfig(shape: Shape): Record<string, unknown> {
     name: `shape:${shape.id}`,
     stroke: '#b24631',
     strokeWidth: selectedShapeId.value === shape.id ? 2.2 : 1.5,
-    fill: 'rgba(194, 88, 61, 0.13)',
+    fill: showOutlineFill.value ? 'rgba(194, 88, 61, 0.13)' : 'transparent',
+    fillEnabled: showOutlineFill.value,
     hitStrokeWidth: 12,
   }
   switch (shape.type) {
@@ -173,8 +336,8 @@ function shapeConfig(shape: Shape): Record<string, unknown> {
       return {
         ...common,
         data: pathData(shape),
-        fill: shape.closed ? common.fill : 'transparent',
-        fillEnabled: shape.closed,
+        fill: shape.closed && showOutlineFill.value ? common.fill : 'transparent',
+        fillEnabled: shape.closed && showOutlineFill.value,
         lineCap: 'round',
         lineJoin: 'round',
       }
@@ -732,13 +895,13 @@ defineExpose({ fitCanvas })
             shadowBlur: 18, shadowOpacity: 0.12, shadowOffsetY: 6,
           }" />
 
-          <template v-if="showRaster">
+          <template v-if="showRasterFill">
             <v-rect v-for="band in rasterBands" :key="band.key" :config="{
               ...band, fill: '#263d36', opacity: viewMode === 'overlay' ? 0.7 : 0.92,
             }" />
           </template>
 
-          <template v-if="showRaster">
+          <template v-if="showGrid">
             <v-line v-for="(x, index) in verticalLines" :key="`v-${index}`"
               :config="{ points: [x, 0, x, fabricHeightPx], stroke: index % 5 === 0 ? '#a59d90' : '#d8d2c8', strokeWidth: index % 5 === 0 ? 0.8 : 0.45, listening: false }" />
             <v-line v-for="(y, index) in horizontalLines" :key="`h-${index}`"
@@ -827,6 +990,36 @@ defineExpose({ fitCanvas })
             fill: 'rgba(40, 125, 114, 0.14)', dash: [3, 2], listening: false,
           }" />
         </v-group>
+
+        <template v-if="viewMode === 'outline'">
+          <v-line v-for="annotation in outlineShapingAnnotations" :key="`${annotation.key}-connector`"
+            :config="{
+              points: annotation.connectorPoints,
+              stroke: '#b24631', strokeWidth: 1, opacity: 0.58,
+              dash: [3, 3], listening: false,
+            }" />
+          <v-group v-for="annotation in outlineShapingAnnotations" :key="annotation.key"
+            :config="{ x: annotation.x, y: annotation.y, listening: false }">
+            <v-rect :config="{
+              width: annotation.width, height: annotation.height,
+              fill: 'rgba(255, 253, 248, 0.96)', stroke: '#d8c9bd', strokeWidth: 1,
+              cornerRadius: 6, shadowColor: '#4a3f35', shadowBlur: 7,
+              shadowOpacity: 0.12, shadowOffsetY: 2, listening: false,
+            }" />
+            <v-text v-for="(line, lineIndex) in annotation.lines" :key="`${annotation.key}-${lineIndex}`"
+              :config="{
+                x: annotationPaddingX,
+                y: annotationPaddingY + lineIndex * annotationLineHeight,
+                width: annotation.width - annotationPaddingX * 2,
+                height: annotationLineHeight,
+                text: line,
+                fill: line.startsWith('加 ') ? '#237351' : line.startsWith('减 ') ? '#b24631' : '#6f746f',
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                fontSize: 10, fontStyle: line.startsWith('加 ') || line.startsWith('减 ') ? 'bold' : 'normal',
+                verticalAlign: 'middle', listening: false,
+              }" />
+          </v-group>
+        </template>
       </v-layer>
     </v-stage>
 

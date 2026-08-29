@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { RasterRow } from '../raster/raster.types'
 import {
+  edgeShapingPlanToLabelLines,
   generateEdgeShapingPlan,
   generateInstructions,
   instructionToText,
@@ -125,5 +126,39 @@ describe('Knitting Planner', () => {
 
     expect(plan.supported).toBe(false)
     expect(plan.rules).toEqual([])
+  })
+
+  it('将多阶段加减针规律格式化为画布标注文案', () => {
+    expect(edgeShapingPlanToLabelLines({
+      side: 'left',
+      rules: [
+        { everyRows: 2, stitchCount: 1, repeatCount: 4, operation: 'increase' },
+        { everyRows: 3, stitchCount: 2, repeatCount: 2, operation: 'decrease' },
+      ],
+      totalRows: 14,
+      totalIncreasedStitches: 4,
+      totalDecreasedStitches: 4,
+      supported: true,
+    }, true)).toEqual(['加 2-1-4', '减 3-2-2'])
+  })
+
+  it('为无变化、分离区域和未落入针格提供明确标注', () => {
+    const basePlan = generateEdgeShapingPlan(
+      generateInstructions([row(0, 2, 5), row(1, 2, 5)], 'bottom-up'),
+      'left',
+    )
+    expect(edgeShapingPlanToLabelLines(basePlan, true)).toEqual(['不加不减'])
+    expect(edgeShapingPlanToLabelLines({ ...basePlan, supported: false }, true))
+      .toEqual(['暂不支持归纳'])
+    expect(edgeShapingPlanToLabelLines(basePlan, false)).toEqual(['未落入针格'])
+  })
+
+  it('画布标注跟随 Top-Down 方向重新归纳', () => {
+    const rows = [row(0, 2, 6), row(1, 3, 6), row(2, 4, 6)]
+    const bottomUp = generateEdgeShapingPlan(generateInstructions(rows, 'bottom-up'), 'left')
+    const topDown = generateEdgeShapingPlan(generateInstructions(rows, 'top-down'), 'left')
+
+    expect(edgeShapingPlanToLabelLines(bottomUp, true)).toEqual(['减 2-1-1', '减 1-1-1'])
+    expect(edgeShapingPlanToLabelLines(topDown, true)).toEqual(['加 2-1-1', '加 1-1-1'])
   })
 })
