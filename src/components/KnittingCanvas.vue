@@ -10,6 +10,10 @@ import type {
   PolygonShape,
   Shape,
 } from '../core/geometry/shape.types'
+import {
+  findNearestBoundarySegment,
+  getShapeBoundarySegments,
+} from '../core/geometry/boundarySegments'
 import { getShapeBounds, resizeShapeToBounds, translateShape } from '../core/geometry/geometry'
 import {
   bendPathSegment,
@@ -19,11 +23,8 @@ import {
   pathSegmentCount,
   splitPathSegment,
 } from '../core/geometry/path'
-import {
-  edgeShapingPlanToLabelLines,
-  generateEdgeShapingPlan,
-} from '../core/knitting/planner'
 import type { ShapingSide } from '../core/knitting/planner.types'
+import { describeBoundarySegmentShaping } from '../core/knitting/segmentPlanner'
 import { useEditorStore } from '../stores/editor'
 
 type Corner = 'nw' | 'ne' | 'se' | 'sw'
@@ -78,12 +79,12 @@ const draftPathNodes = ref<PathNode[]>([])
 const pathPointer = ref<Point | null>(null)
 const selectedPointIndex = ref<number | null>(null)
 const selectedPathNodeIndex = ref<number | null>(null)
-const selectedGridAnnotationShapeId = ref<string | null>(null)
+const selectedGridAnnotationSegment = ref<{ shapeId: string; segmentIndex: number } | null>(null)
 const annotationHovered = ref(false)
 let resizeObserver: ResizeObserver | null = null
 
 const canvasBoundaryPadding = 24
-const annotationWidth = 104
+const annotationWidth = 132
 const annotationLineHeight = 14
 const annotationPaddingX = 8
 const annotationPaddingY = 6
@@ -223,63 +224,85 @@ const shapingAnnotations = computed<OutlineShapingAnnotation[]>(() => {
   const planByShapeId = new Map(shapePlans.value.map((plan) => [plan.shapeId, plan]))
   const drafts: AnnotationDraft[] = []
   const viewportRight = stageSize.value.width - annotationViewportMargin
-  const annotatedShapes = viewMode.value === 'grid'
-    ? shapes.value.filter((shape) => shape.id === selectedGridAnnotationShapeId.value)
-    : shapes.value
+  const shapeBounds = shapes.value.map(getShapeBounds)
+  const outlineLeft = shapeBounds.length ? Math.min(...shapeBounds.map((bounds) => bounds.x)) : 0
+  const outlineRight = shapeBounds.length
+    ? Math.max(...shapeBounds.map((bounds) => bounds.x + bounds.width))
+    : fabric.value.widthCm
+  const outlineCenterX = (outlineLeft + outlineRight) / 2
+  const allSegments = shapes.value.flatMap(getShapeBoundarySegments)
+  const annotatedSegments = viewMode.value === 'grid'
+    ? allSegments.filter((segment) =>
+      segment.shapeId === selectedGridAnnotationSegment.value?.shapeId
+      && segment.segmentIndex === selectedGridAnnotationSegment.value?.segmentIndex,
+    )
+    : allSegments
 
-  for (const shape of annotatedShapes) {
-    const shapePlan = planByShapeId.get(shape.id)
+  for (const segment of annotatedSegments) {
+    const shapePlan = planByShapeId.get(segment.shapeId)
     if (!shapePlan) continue
-    const bounds = getShapeBounds(shape)
-    const centerYcm = bounds.y + bounds.height / 2
+    const description = describeBoundarySegmentShaping(
+      segment,
+      shapePlan.direction,
+      gauge.value,
+      fabric.value,
+      store.rasterOptions,
+      outlineCenterX,
+    )
+    const sidePrefix = description.boundarySide === 'left'
+      ? '左边界'
+      : description.boundarySide === 'right' ? '右边界' : null
+    const ruleLines = sidePrefix
+      ? description.lines.map((line) => `${sidePrefix} · ${line}`)
+      : description.lines
+    const lines = [`第 ${segment.segmentIndex + 1} 段 · ${directionLabel(shapePlan.direction)}`, ...ruleLines]
+    const height = annotationPaddingY * 2 + lines.length * annotationLineHeight
+    const side: ShapingSide = segment.anchor.x <= outlineCenterX ? 'left' : 'right'
+    const anchorX = pan.value.x + segment.anchor.x * zoom.value
+    const anchorY = pan.value.y + (fabric.value.heightCm - segment.anchor.y) * zoom.value
+    const outwardX = side === 'left'
+      ? anchorX - annotationBoundaryGap - annotationWidth
+      : anchorX + annotationBoundaryGap
+    const inwardX = side === 'left'
+      ? anchorX + annotationBoundaryGap
+      : anchorX - annotationBoundaryGap - annotationWidth
+    const outwardFits = outwardX >= annotationViewportMargin
+      && outwardX + annotationWidth <= viewportRight
 
-    for (const side of ['left', 'right'] as const) {
-      const boundaryXcm = side === 'left' ? bounds.x : bounds.x + bounds.width
-      const anchorX = pan.value.x + boundaryXcm * zoom.value
-      const anchorY = pan.value.y + (fabric.value.heightCm - centerYcm) * zoom.value
-      const edgePlan = generateEdgeShapingPlan(shapePlan.instructions, side)
-      const ruleLines = edgeShapingPlanToLabelLines(
-        edgePlan,
-        shapePlan.instructions.length > 0,
-      )
-      const sideLabel = side === 'left' ? '左侧' : '右侧'
-      const lines = [`${sideLabel} · ${directionLabel(shapePlan.direction)}`, ...ruleLines]
-      const height = annotationPaddingY * 2 + lines.length * annotationLineHeight
-      const outwardX = side === 'left'
-        ? anchorX - annotationBoundaryGap - annotationWidth
-        : anchorX + annotationBoundaryGap
-      const inwardX = side === 'left'
-        ? anchorX + annotationBoundaryGap
-        : anchorX - annotationBoundaryGap - annotationWidth
-      const outwardFits = outwardX >= annotationViewportMargin
-        && outwardX + annotationWidth <= viewportRight
-
-      drafts.push({
-        key: `${shape.id}-${side}`,
-        shapeId: shape.id,
-        side,
-        anchorX,
-        anchorY,
-        x: clamp(
-          outwardFits ? outwardX : inwardX,
-          annotationViewportMargin,
-          viewportRight - annotationWidth,
-        ),
-        preferredY: anchorY - height / 2,
-        width: annotationWidth,
-        height,
-        lines,
-      })
-    }
+    drafts.push({
+      key: segment.key,
+      shapeId: segment.shapeId,
+      side,
+      anchorX,
+      anchorY,
+      x: clamp(
+        outwardFits ? outwardX : inwardX,
+        annotationViewportMargin,
+        viewportRight - annotationWidth,
+      ),
+      preferredY: anchorY - height / 2,
+      width: annotationWidth,
+      height,
+      lines,
+    })
   }
 
-  return (['left', 'right'] as const).flatMap((side) =>
-    layoutAnnotationSide(drafts.filter((draft) => draft.side === side)).map((annotation) => ({
-      ...annotation,
-      connectorPoints: connectorPoints(annotation),
-    })),
-  )
+  return layoutAnnotationSide(drafts).map((annotation) => ({
+    ...annotation,
+    connectorPoints: connectorPoints(annotation),
+  }))
 })
+
+function annotationLineColor(line: string, lineIndex: number): string {
+  if (lineIndex === 0) return '#287d72'
+  if (line.includes('加 ')) return '#237351'
+  if (line.includes('减 ')) return '#b24631'
+  return '#6f746f'
+}
+
+function annotationLineIsBold(line: string, lineIndex: number): boolean {
+  return lineIndex === 0 || line.includes('加 ') || line.includes('减 ')
+}
 
 function toCanvasPoint(point: Point): Point {
   return {
@@ -515,7 +538,14 @@ function onMouseDown(event: KonvaEventObject<MouseEvent>): void {
   }
 
   if (viewMode.value === 'grid' && name.startsWith('shape:')) {
-    selectedGridAnnotationShapeId.value = name.slice('shape:'.length)
+    const shapeId = name.slice('shape:'.length)
+    const shape = shapes.value.find((item) => item.id === shapeId)
+    const segment = shape
+      ? findNearestBoundarySegment(shape, worldFromScreen(pointer))
+      : null
+    selectedGridAnnotationSegment.value = segment
+      ? { shapeId, segmentIndex: segment.segmentIndex }
+      : null
   }
 
   const isPrimaryBackgroundDrag =
@@ -523,7 +553,7 @@ function onMouseDown(event: KonvaEventObject<MouseEvent>): void {
   if (activeTool.value === 'pan' || event.evt.button === 1 || isPrimaryBackgroundDrag) {
     if (isPrimaryBackgroundDrag) {
       selectedShapeId.value = null
-      if (viewMode.value === 'grid') selectedGridAnnotationShapeId.value = null
+      if (viewMode.value === 'grid') selectedGridAnnotationSegment.value = null
       selectedPointIndex.value = null
       selectedPathNodeIndex.value = null
     }
@@ -593,7 +623,7 @@ function onMouseDown(event: KonvaEventObject<MouseEvent>): void {
     return
   }
   selectedShapeId.value = null
-  if (viewMode.value === 'grid') selectedGridAnnotationShapeId.value = null
+  if (viewMode.value === 'grid') selectedGridAnnotationSegment.value = null
   selectedPointIndex.value = null
   selectedPathNodeIndex.value = null
 }
@@ -914,14 +944,14 @@ watch(selectedShapeId, () => {
   selectedPathNodeIndex.value = null
 })
 watch(viewMode, (mode, previousMode) => {
-  if (mode === 'grid' && previousMode !== 'grid') selectedGridAnnotationShapeId.value = null
+  if (mode === 'grid' && previousMode !== 'grid') selectedGridAnnotationSegment.value = null
 })
 watch(() => shapes.value.map((shape) => shape.id), (shapeIds) => {
   if (
-    selectedGridAnnotationShapeId.value
-    && !shapeIds.includes(selectedGridAnnotationShapeId.value)
+    selectedGridAnnotationSegment.value
+    && !shapeIds.includes(selectedGridAnnotationSegment.value.shapeId)
   ) {
-    selectedGridAnnotationShapeId.value = null
+    selectedGridAnnotationSegment.value = null
   }
 })
 
@@ -1054,9 +1084,9 @@ defineExpose({ fitCanvas })
                 width: annotation.width - annotationPaddingX * 2,
                 height: annotationLineHeight,
                 text: line,
-                fill: lineIndex === 0 ? '#287d72' : line.startsWith('加 ') ? '#237351' : line.startsWith('减 ') ? '#b24631' : '#6f746f',
+                fill: annotationLineColor(line, lineIndex),
                 fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                fontSize: 10, fontStyle: lineIndex === 0 || line.startsWith('加 ') || line.startsWith('减 ') ? 'bold' : 'normal',
+                fontSize: 10, fontStyle: annotationLineIsBold(line, lineIndex) ? 'bold' : 'normal',
                 verticalAlign: 'middle', listening: false,
               }" />
           </v-group>
@@ -1068,7 +1098,7 @@ defineExpose({ fitCanvas })
       <b>{{ fabricGrid.columnCount }} 针 × {{ fabricGrid.rowCount }} 行</b>
       <span>原点在左下角 · 单位 cm</span>
     </div>
-    <div v-if="viewMode === 'grid' && !selectedGridAnnotationShapeId"
+    <div v-if="viewMode === 'grid' && !selectedGridAnnotationSegment"
       class="canvas-hud canvas-hud--selection-tip">
       <b>点击红色轮廓</b>
       <span>查看该对象的加减针规律与编织方向</span>
