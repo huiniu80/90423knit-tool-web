@@ -325,9 +325,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   .app-header { grid-template-columns: 1fr auto; }
   .header-status { display: none; }
   .editor-main { grid-template-columns: 250px minmax(0, 1fr); }
-  .tool-button { width: 39px; }
-  .tool-button small { display: none; }
-  .segmented-control.compact { display: none; }
+  .canvas-toolbar { overflow-x: auto; }
 }
 
 @media (max-width: 760px) {

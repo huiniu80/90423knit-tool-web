@@ -362,6 +362,16 @@ function shapeConfig(shape: Shape): Record<string, unknown> {
   }
 }
 
+function gridHitShapeConfig(shape: Shape): Record<string, unknown> {
+  return {
+    ...shapeConfig(shape),
+    stroke: 'rgba(0, 0, 0, 0.001)',
+    fill: 'rgba(0, 0, 0, 0.001)',
+    fillEnabled: shape.type !== 'path' || shape.closed,
+    hitStrokeWidth: 14,
+  }
+}
+
 const selectionRect = computed(() => {
   if (!selectedShape.value || activeTool.value !== 'select') return null
   const bounds = getShapeBounds(selectedShape.value)
@@ -931,6 +941,16 @@ defineExpose({ fitCanvas })
           <v-line v-for="(y, index) in horizontalLines" :key="`h-${index}`"
             :config="{ points: [0, y, fabricWidthPx, y], stroke: index % 5 === 0 ? '#a59d90' : '#d8d2c8', strokeWidth: index % 5 === 0 ? 0.8 : 0.45, listening: false }" />
 
+          <template v-if="viewMode === 'grid'">
+            <template v-for="shape in shapes" :key="`grid-hit-${shape.id}`">
+              <v-rect v-if="shape.type === 'rectangle'" :config="gridHitShapeConfig(shape)" />
+              <v-circle v-else-if="shape.type === 'circle'" :config="gridHitShapeConfig(shape)" />
+              <v-ellipse v-else-if="shape.type === 'ellipse'" :config="gridHitShapeConfig(shape)" />
+              <v-path v-else-if="shape.type === 'path'" :config="gridHitShapeConfig(shape)" />
+              <v-line v-else :config="gridHitShapeConfig(shape)" />
+            </template>
+          </template>
+
           <template v-if="showOutline">
             <template v-for="shape in shapes" :key="shape.id">
               <v-rect v-if="shape.type === 'rectangle'" :config="shapeConfig(shape)" />
@@ -941,7 +961,7 @@ defineExpose({ fitCanvas })
             </template>
           </template>
 
-          <template v-if="selectionRect && showOutline">
+          <template v-if="selectionRect">
             <v-rect :config="{ ...selectionRect, stroke: '#287d72', strokeWidth: 1.3, dash: [5, 4], listening: false }" />
             <v-circle v-for="handle in resizeHandles" :key="handle.corner" :config="{
               name: `resize:${handle.corner}`, x: handle.x, y: handle.y, radius: 5,
@@ -949,16 +969,14 @@ defineExpose({ fitCanvas })
             }" />
           </template>
 
-          <template v-if="showOutline">
-            <v-circle v-for="handle in polygonHandles" :key="`point-${handle.index}`" :config="{
-              name: `point:${selectedShapeId}:${handle.index}`, x: handle.x, y: handle.y,
-              radius: selectedPointIndex === handle.index ? 6 : 4.5,
-              fill: selectedPointIndex === handle.index ? '#e3a43b' : '#fffdf8',
-              stroke: '#b24631', strokeWidth: 1.8,
-            }" />
-          </template>
+          <v-circle v-for="handle in polygonHandles" :key="`point-${handle.index}`" :config="{
+            name: `point:${selectedShapeId}:${handle.index}`, x: handle.x, y: handle.y,
+            radius: selectedPointIndex === handle.index ? 6 : 4.5,
+            fill: selectedPointIndex === handle.index ? '#e3a43b' : '#fffdf8',
+            stroke: '#b24631', strokeWidth: 1.8,
+          }" />
 
-          <template v-if="showOutline && pathAnchorHandles.length">
+          <template v-if="pathAnchorHandles.length">
             <v-line v-for="handle in pathControlHandles" :key="`guide-${handle.control}-${handle.nodeIndex}`"
               :config="{
                 points: [handle.anchor.x, handle.anchor.y, handle.x, handle.y],
@@ -1022,13 +1040,13 @@ defineExpose({ fitCanvas })
               dash: [3, 3], listening: false,
             }" />
           <v-group v-for="annotation in outlineShapingAnnotations" :key="annotation.key"
-            :config="{ x: annotation.x, y: annotation.y, listening: true }">
+            :config="{ x: annotation.x, y: annotation.y, listening: activeTool !== 'path' }">
             <v-rect :config="{
               name: `outline-direction:${annotation.shapeId}`,
               width: annotation.width, height: annotation.height,
               fill: 'rgba(255, 253, 248, 0.96)', stroke: '#d8c9bd', strokeWidth: 1,
               cornerRadius: 6, shadowColor: '#4a3f35', shadowBlur: 7,
-              shadowOpacity: 0.12, shadowOffsetY: 2, listening: true,
+              shadowOpacity: 0.12, shadowOffsetY: 2, listening: activeTool !== 'path',
             }" />
             <v-text v-for="(line, lineIndex) in annotation.lines" :key="`${annotation.key}-${lineIndex}`"
               :config="{
