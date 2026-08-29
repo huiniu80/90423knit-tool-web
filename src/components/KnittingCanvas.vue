@@ -88,7 +88,7 @@ const annotationWidth = 132
 const annotationLineHeight = 14
 const annotationPaddingX = 8
 const annotationPaddingY = 6
-const annotationBoundaryGap = 10
+const annotationBoundaryGap = 42
 const annotationCollisionGap = 6
 const annotationViewportMargin = 8
 
