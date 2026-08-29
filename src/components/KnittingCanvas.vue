@@ -23,7 +23,6 @@ import {
   pathSegmentCount,
   splitPathSegment,
 } from '../core/geometry/path'
-import type { ShapingSide } from '../core/knitting/planner.types'
 import { describeBoundarySegmentShaping } from '../core/knitting/segmentPlanner'
 import { useEditorStore } from '../stores/editor'
 
@@ -40,20 +39,19 @@ type Interaction =
 interface AnnotationDraft {
   key: string
   shapeId: string
-  side: ShapingSide
+  shapeName: string
+  segmentIndex: number
   anchorX: number
   anchorY: number
-  x: number
-  preferredY: number
-  width: number
-  height: number
   lines: string[]
   markers: Array<{ label: string; x: number; y: number }>
 }
 
-interface OutlineShapingAnnotation extends Omit<AnnotationDraft, 'preferredY'> {
-  y: number
-  connectorPoints: number[]
+interface AnnotationGroup {
+  shapeId: string
+  shapeName: string
+  direction: (typeof shapePlans.value)[number]['direction']
+  annotations: AnnotationDraft[]
 }
 
 const store = useEditorStore()
@@ -81,17 +79,11 @@ const pathPointer = ref<Point | null>(null)
 const selectedPointIndex = ref<number | null>(null)
 const selectedPathNodeIndex = ref<number | null>(null)
 const selectedGridAnnotationSegment = ref<{ shapeId: string; segmentIndex: number } | null>(null)
+const highlightedAnnotationKey = ref<string | null>(null)
 const annotationHovered = ref(false)
 let resizeObserver: ResizeObserver | null = null
 
 const canvasBoundaryPadding = 24
-const annotationWidth = 180
-const annotationLineHeight = 14
-const annotationPaddingX = 8
-const annotationPaddingY = 6
-const annotationBoundaryGap = 42
-const annotationCollisionGap = 6
-const annotationViewportMargin = 8
 
 function clonePlain<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -134,79 +126,6 @@ const rasterBands = computed(() =>
   ),
 )
 
-function clamp(value: number, minimum: number, maximum: number): number {
-  return Math.min(Math.max(value, minimum), Math.max(minimum, maximum))
-}
-
-function annotationsOverlapHorizontally(
-  left: Pick<AnnotationDraft, 'x' | 'width'>,
-  right: Pick<AnnotationDraft, 'x' | 'width'>,
-): boolean {
-  return left.x < right.x + right.width + annotationCollisionGap
-    && left.x + left.width + annotationCollisionGap > right.x
-}
-
-function layoutAnnotationSide(drafts: AnnotationDraft[]): Array<AnnotationDraft & { y: number }> {
-  const top = annotationViewportMargin
-  const bottom = stageSize.value.height - annotationViewportMargin
-  const placed = [...drafts]
-    .sort((left, right) => left.preferredY - right.preferredY)
-    .map((draft) => ({
-      ...draft,
-      y: clamp(draft.preferredY, top, bottom - draft.height),
-    }))
-
-  placed.forEach((current, index) => {
-    for (let previousIndex = 0; previousIndex < index; previousIndex += 1) {
-      const previous = placed[previousIndex]
-      if (!previous || !annotationsOverlapHorizontally(previous, current)) continue
-      if (current.y < previous.y + previous.height + annotationCollisionGap) {
-        current.y = previous.y + previous.height + annotationCollisionGap
-      }
-    }
-  })
-
-  const lastBottom = placed.reduce(
-    (maximum, item) => Math.max(maximum, item.y + item.height),
-    top,
-  )
-  const upwardShift = Math.max(0, lastBottom - bottom)
-  if (upwardShift) {
-    placed.forEach((item) => {
-      item.y -= upwardShift
-    })
-  }
-  const firstTop = placed.reduce((minimum, item) => Math.min(minimum, item.y), bottom)
-  const downwardShift = Math.max(0, top - firstTop)
-  if (downwardShift) {
-    placed.forEach((item) => {
-      item.y += downwardShift
-    })
-  }
-
-  return placed
-}
-
-function connectorPoints(
-  annotation: AnnotationDraft & { y: number },
-): number[] {
-  let endX: number
-  if (annotation.anchorX <= annotation.x) endX = annotation.x
-  else if (annotation.anchorX >= annotation.x + annotation.width) {
-    endX = annotation.x + annotation.width
-  } else {
-    endX = annotation.side === 'left'
-      ? annotation.x
-      : annotation.x + annotation.width
-  }
-  const endY = clamp(
-    annotation.anchorY,
-    annotation.y + annotationPaddingY,
-    annotation.y + annotation.height - annotationPaddingY,
-  )
-  return [annotation.anchorX, annotation.anchorY, endX, endY]
-}
-
 function directionLabel(direction: (typeof shapePlans.value)[number]['direction']): string {
   return direction === 'bottom-up' ? '↑ 下→上' : '↓ 上→下'
 }
@@ -220,11 +139,10 @@ function toggleAnnotationDirection(shapeId: string): void {
   )
 }
 
-const shapingAnnotations = computed<OutlineShapingAnnotation[]>(() => {
+const shapingAnnotations = computed<AnnotationDraft[]>(() => {
   if (viewMode.value !== 'outline' && viewMode.value !== 'grid') return []
   const planByShapeId = new Map(shapePlans.value.map((plan) => [plan.shapeId, plan]))
   const drafts: AnnotationDraft[] = []
-  const viewportRight = stageSize.value.width - annotationViewportMargin
   const shapeBounds = shapes.value.map(getShapeBounds)
   const outlineLeft = shapeBounds.length ? Math.min(...shapeBounds.map((bounds) => bounds.x)) : 0
   const outlineRight = shapeBounds.length
@@ -257,33 +175,16 @@ const shapingAnnotations = computed<OutlineShapingAnnotation[]>(() => {
       ? description.lines.map((line) => `${sidePrefix} · ${line}`)
       : description.lines
     const lines = [`第 ${segment.segmentIndex + 1} 段 · ${directionLabel(shapePlan.direction)}`, ...ruleLines]
-    const height = annotationPaddingY * 2 + lines.length * annotationLineHeight
-    const side: ShapingSide = segment.anchor.x <= outlineCenterX ? 'left' : 'right'
     const anchorX = pan.value.x + segment.anchor.x * zoom.value
     const anchorY = pan.value.y + (fabric.value.heightCm - segment.anchor.y) * zoom.value
-    const outwardX = side === 'left'
-      ? anchorX - annotationBoundaryGap - annotationWidth
-      : anchorX + annotationBoundaryGap
-    const inwardX = side === 'left'
-      ? anchorX + annotationBoundaryGap
-      : anchorX - annotationBoundaryGap - annotationWidth
-    const outwardFits = outwardX >= annotationViewportMargin
-      && outwardX + annotationWidth <= viewportRight
 
     drafts.push({
       key: segment.key,
       shapeId: segment.shapeId,
-      side,
+      shapeName: segment.sourceShape.name ?? '未命名织片',
+      segmentIndex: segment.segmentIndex,
       anchorX,
       anchorY,
-      x: clamp(
-        outwardFits ? outwardX : inwardX,
-        annotationViewportMargin,
-        viewportRight - annotationWidth,
-      ),
-      preferredY: anchorY - height / 2,
-      width: annotationWidth,
-      height,
       lines,
       markers: description.markers.map((marker) => ({
         label: marker.label,
@@ -293,21 +194,31 @@ const shapingAnnotations = computed<OutlineShapingAnnotation[]>(() => {
     })
   }
 
-  return layoutAnnotationSide(drafts).map((annotation) => ({
-    ...annotation,
-    connectorPoints: connectorPoints(annotation),
-  }))
+  return drafts
 })
 
-function annotationLineColor(line: string, lineIndex: number): string {
-  if (lineIndex === 0) return '#287d72'
-  if (line.includes('加')) return '#237351'
-  if (line.includes('减')) return '#b24631'
-  return '#6f746f'
-}
+const annotationGroups = computed<AnnotationGroup[]>(() => {
+  const annotationsByShape = new Map<string, AnnotationDraft[]>()
+  shapingAnnotations.value.forEach((annotation) => {
+    const current = annotationsByShape.get(annotation.shapeId) ?? []
+    current.push(annotation)
+    annotationsByShape.set(annotation.shapeId, current)
+  })
+  return shapePlans.value.flatMap((plan) => {
+    const annotations = annotationsByShape.get(plan.shapeId)
+    return annotations?.length
+      ? [{
+          shapeId: plan.shapeId,
+          shapeName: plan.shapeName ?? '未命名织片',
+          direction: plan.direction,
+          annotations,
+        }]
+      : []
+  })
+})
 
-function annotationLineIsBold(line: string, lineIndex: number): boolean {
-  return lineIndex === 0 || line.includes('加') || line.includes('减')
+function annotationIsHighlighted(key: string): boolean {
+  return highlightedAnnotationKey.value === key
 }
 
 function toCanvasPoint(point: Point): Point {
@@ -965,6 +876,7 @@ defineExpose({ fitCanvas })
 </script>
 
 <template>
+  <div :class="['knitting-canvas-shell', { 'has-shaping-rail': viewMode === 'outline' || viewMode === 'grid' }]">
   <div ref="host" class="knitting-canvas" tabindex="0" :style="{ cursor: stageCursor }">
     <v-stage :config="{ width: stageSize.width, height: stageSize.height }"
       @mousedown="onMouseDown" @mousemove="onMouseMove" @mouseup="endInteraction"
@@ -1068,18 +980,14 @@ defineExpose({ fitCanvas })
         </v-group>
 
         <template v-if="viewMode === 'outline' || viewMode === 'grid'">
-          <v-line v-for="annotation in shapingAnnotations" :key="`${annotation.key}-connector`"
-            :config="{
-              points: annotation.connectorPoints,
-              stroke: '#b24631', strokeWidth: 1, opacity: 0.58,
-              dash: [3, 3], listening: false,
-            }" />
           <template v-for="annotation in shapingAnnotations" :key="`${annotation.key}-markers`">
             <v-group v-for="(marker, markerIndex) in annotation.markers"
               :key="`${annotation.key}-marker-${markerIndex}`"
               :config="{ x: marker.x, y: marker.y, listening: false }">
               <v-circle :config="{
-                radius: 9, fill: '#287d72', stroke: '#fffdf8', strokeWidth: 2,
+                radius: annotationIsHighlighted(annotation.key) ? 10 : 9,
+                fill: annotationIsHighlighted(annotation.key) ? '#b24631' : '#287d72',
+                stroke: '#fffdf8', strokeWidth: 2,
                 shadowColor: '#263d36', shadowBlur: 4, shadowOpacity: 0.2,
               }" />
               <v-text :config="{
@@ -1091,26 +999,20 @@ defineExpose({ fitCanvas })
             </v-group>
           </template>
           <v-group v-for="annotation in shapingAnnotations" :key="annotation.key"
-            :config="{ x: annotation.x, y: annotation.y, listening: activeTool !== 'path' }">
+            :config="{ x: annotation.anchorX, y: annotation.anchorY, listening: false }">
             <v-rect :config="{
-              name: `outline-direction:${annotation.shapeId}`,
-              width: annotation.width, height: annotation.height,
-              fill: 'rgba(255, 253, 248, 0.96)', stroke: '#d8c9bd', strokeWidth: 1,
-              cornerRadius: 6, shadowColor: '#4a3f35', shadowBlur: 7,
-              shadowOpacity: 0.12, shadowOffsetY: 2, listening: activeTool !== 'path',
+              x: -18, y: -11, width: 36, height: 22,
+              fill: annotationIsHighlighted(annotation.key) ? '#b24631' : '#263d36',
+              stroke: '#fffdf8', strokeWidth: 2, cornerRadius: 11,
+              shadowColor: '#263d36', shadowBlur: 5, shadowOpacity: 0.2,
+              shadowOffsetY: 2, listening: false,
             }" />
-            <v-text v-for="(line, lineIndex) in annotation.lines" :key="`${annotation.key}-${lineIndex}`"
-              :config="{
-                x: annotationPaddingX,
-                y: annotationPaddingY + lineIndex * annotationLineHeight,
-                width: annotation.width - annotationPaddingX * 2,
-                height: annotationLineHeight,
-                text: line,
-                fill: annotationLineColor(line, lineIndex),
-                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                fontSize: 10, fontStyle: annotationLineIsBold(line, lineIndex) ? 'bold' : 'normal',
-                verticalAlign: 'middle', listening: false,
-              }" />
+            <v-text :config="{
+              x: -16, y: -7, width: 32, height: 14,
+              text: `${annotation.segmentIndex + 1}段`, align: 'center', verticalAlign: 'middle',
+              fill: '#fffdf8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+              fontSize: 9, fontStyle: 'bold', listening: false,
+            }" />
           </v-group>
         </template>
       </v-layer>
@@ -1137,5 +1039,57 @@ defineExpose({ fitCanvas })
         完成开放路径 <kbd>Enter</kbd>
       </button>
     </div>
+  </div>
+
+  <aside v-if="viewMode === 'outline' || viewMode === 'grid'" class="shaping-rail" aria-label="分段针法说明">
+    <div class="shaping-rail__header">
+      <div>
+        <span class="eyebrow">SHAPING GUIDE</span>
+        <h2>分段针法</h2>
+      </div>
+      <span class="shaping-rail__count">{{ shapingAnnotations.length }} 段</span>
+    </div>
+    <p class="shaping-rail__intro">
+      画布上的“段”标签对应这里的卡片；悬停卡片可高亮该段的执行节点。
+    </p>
+
+    <div v-if="annotationGroups.length" class="shaping-rail__scroll">
+      <section v-for="group in annotationGroups" :key="group.shapeId" class="shaping-group">
+        <div class="shaping-group__header">
+          <div>
+            <span>织片</span>
+            <strong>{{ group.shapeName }}</strong>
+          </div>
+          <button type="button" :title="'切换编织方向'" @click="toggleAnnotationDirection(group.shapeId)">
+            {{ directionLabel(group.direction) }}
+            <small>切换</small>
+          </button>
+        </div>
+
+        <article v-for="annotation in group.annotations" :key="annotation.key"
+          :class="['shaping-card', { active: annotationIsHighlighted(annotation.key) }]"
+          @mouseenter="highlightedAnnotationKey = annotation.key"
+          @mouseleave="highlightedAnnotationKey = null">
+          <header>
+            <span>{{ annotation.segmentIndex + 1 }} 段</span>
+            <b>{{ annotation.lines[1] ?? '边界针法' }}</b>
+          </header>
+          <ol v-if="annotation.lines.length > 2" class="shaping-card__rules">
+            <li v-for="(line, lineIndex) in annotation.lines.slice(2)"
+              :key="`${annotation.key}-rule-${lineIndex}`"
+              :class="{ increase: line.includes('加'), decrease: line.includes('减') }">
+              {{ line }}
+            </li>
+          </ol>
+        </article>
+      </section>
+    </div>
+
+    <div v-else class="shaping-rail__empty">
+      <span>{{ viewMode === 'grid' ? '⌖' : '◇' }}</span>
+      <strong>{{ viewMode === 'grid' ? '请在画布上选择一段边界' : '暂无可分析的边界' }}</strong>
+      <p>{{ viewMode === 'grid' ? '点击红色轮廓，右侧只显示该段针法。' : '添加闭合织片后会在这里生成分段说明。' }}</p>
+    </div>
+  </aside>
   </div>
 </template>
