@@ -4,8 +4,11 @@ import {
   edgeShapingPlanToLabelLines,
   generateEdgeShapingPlan,
   generateGarmentEdgeShapingPlan,
+  generateGarmentEdgeShapingSequence,
   generateInstructions,
   instructionToText,
+  shapingSequenceStepToText,
+  stepNumberLabel,
 } from './planner'
 
 function row(rowIndex: number, startStitch: number, endStitch: number): RasterRow {
@@ -158,6 +161,24 @@ describe('Knitting Planner', () => {
     expect(generateGarmentEdgeShapingPlan(instructions, 'right-neck').rules).toEqual([
       { everyRows: 1, stitchCount: 1, repeatCount: 1, operation: 'decrease' },
     ])
+  })
+
+  it('加减针步骤按实际编织方向编号并保留行范围', () => {
+    const rows = [row(0, 3, 8), row(1, 2, 8), row(2, 1, 8)]
+    const bottomUp = generateGarmentEdgeShapingSequence(
+      generateInstructions(rows, 'bottom-up'),
+      'left-outer',
+    )
+    const topDown = generateGarmentEdgeShapingSequence(
+      generateInstructions(rows, 'top-down'),
+      'left-outer',
+    )
+
+    expect(bottomUp.map((step) => step.startSourceRowIndex)).toEqual([1, 2])
+    expect(topDown.map((step) => step.startSourceRowIndex)).toEqual([1, 0])
+    expect(bottomUp.map((step) => step.order)).toEqual([1, 2])
+    expect(stepNumberLabel(bottomUp[0]!.order)).toBe('①')
+    expect(shapingSequenceStepToText(bottomUp[0]!)).toBe('第 1–2 行：每 2 行加 1 针，共 1 次')
   })
 
   it('将多阶段加减针规律格式化为画布标注文案', () => {

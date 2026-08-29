@@ -1,8 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
-import { generateGarmentEdgeShapingPlans, instructionToText } from '../core/knitting/planner'
-import type { GarmentEdgeShapingPlan, ShapingOperation } from '../core/knitting/planner.types'
+import {
+  generateGarmentEdgeShapingPlans,
+  generateGarmentEdgeShapingSequence,
+  instructionToText,
+  shapingSequenceStepToText,
+  stepNumberLabel,
+} from '../core/knitting/planner'
+import type { GarmentEdgeShapingPlan, ShapingSequenceStep } from '../core/knitting/planner.types'
 import { useEditorStore } from '../stores/editor'
 
 const store = useEditorStore()
@@ -19,9 +25,13 @@ const {
 const totalStitches = computed(() => selectedShapePlan.value?.totalStitches ?? 0)
 const edgeShapingPlans = computed(() => {
   const plans = generateGarmentEdgeShapingPlans(instructions.value)
-  return hasSeparatedRegions.value
+  const visiblePlans = hasSeparatedRegions.value
     ? plans
     : plans.filter((plan) => plan.edge === 'left-outer' || plan.edge === 'right-outer')
+  return visiblePlans.map((plan) => ({
+    ...plan,
+    sequence: generateGarmentEdgeShapingSequence(instructions.value, plan.edge),
+  }))
 })
 const splitInstruction = computed(() =>
   instructions.value.find((instruction) => instruction.transition === 'split'),
@@ -68,12 +78,12 @@ function changeText(value: number): string {
   return value === 0 ? '—' : String(value)
 }
 
-function operationLabel(operation: ShapingOperation): string {
-  return operation === 'increase' ? '加针' : '减针'
+function sequenceOrderText(sequence: readonly ShapingSequenceStep[]): string {
+  return sequence.map((step) => stepNumberLabel(step.order)).join('→')
 }
 
-function ruleText(rule: GarmentEdgeShapingPlan['rules'][number]): string {
-  return `${rule.everyRows}-${rule.stitchCount}-${rule.repeatCount}`
+function stepCode(step: ShapingSequenceStep): string {
+  return `${step.everyRows}-${step.stitchCount}-${step.repeatCount}`
 }
 
 function planTotalText(plan: GarmentEdgeShapingPlan): string {
@@ -130,15 +140,18 @@ function planTotalText(plan: GarmentEdgeShapingPlan): string {
       <div v-if="instructions.length" class="shaping-rules-panel">
         <div class="shaping-rules-heading">
           <b>加减针规律</b>
-          <span><code>x-y-z</code> = 每 x 行加/减 y 针，共 z 次</span>
+          <span>列表按实际编织顺序从上往下读；<code>x-y-z</code> 为辅助简写</span>
         </div>
         <div class="edge-rule-list">
           <div v-for="plan in edgeShapingPlans" :key="plan.edge" class="edge-rule-row">
             <span class="edge-rule-side">{{ plan.label }}</span>
-            <div v-if="plan.supported && plan.rules.length" class="edge-rule-codes">
-              <span v-for="(rule, index) in plan.rules" :key="`${rule.operation}-${index}`"
-                :class="rule.operation === 'increase' ? 'plus' : 'minus'">
-                {{ operationLabel(rule.operation) }} <code>{{ ruleText(rule) }}</code><template v-if="index < plan.rules.length - 1">,</template>
+            <div v-if="plan.supported && plan.sequence.length" class="edge-rule-sequence">
+              <span class="sequence-order">按 {{ sequenceOrderText(plan.sequence) }} 编织</span>
+              <span v-for="step in plan.sequence" :key="`${step.operation}-${step.order}`"
+                :class="['sequence-step', step.operation === 'increase' ? 'plus' : 'minus']">
+                <b>{{ stepNumberLabel(step.order) }}</b>
+                <span>{{ shapingSequenceStepToText(step) }}</span>
+                <code>{{ stepCode(step) }}</code>
               </span>
             </div>
             <span v-else-if="plan.supported" class="edge-rule-empty">不加不减</span>

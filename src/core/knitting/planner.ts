@@ -6,6 +6,7 @@ import type {
   KnitDirection,
   KnittingInstruction,
   ShapingRule,
+  ShapingSequenceStep,
   ShapingOperation,
   ShapingSide,
 } from './planner.types'
@@ -170,47 +171,30 @@ export function generateGarmentEdgeShapingPlan(
   instructions: readonly KnittingInstruction[],
   edge: GarmentEdgeRole,
 ): GarmentEdgeShapingPlan {
-  const rules: ShapingRule[] = []
-  const isNeckEdge = edge === 'left-neck' || edge === 'right-neck'
-  let previousChangeRow = isNeckEdge
-    ? instructions.find((instruction) => instruction.transition === 'split')?.rowNumber ?? 0
-    : 0
-  let totalIncreasedStitches = 0
-  let totalDecreasedStitches = 0
-
-  for (const instruction of instructions) {
-    if (!instruction.supported) {
-      return {
-        edge,
-        label: garmentEdgeLabels[edge],
-        rules: [],
-        totalRows: 0,
-        totalIncreasedStitches: 0,
-        totalDecreasedStitches: 0,
-        supported: false,
-      }
+  if (instructions.some((instruction) => !instruction.supported)) {
+    return {
+      edge,
+      label: garmentEdgeLabels[edge],
+      rules: [],
+      totalRows: 0,
+      totalIncreasedStitches: 0,
+      totalDecreasedStitches: 0,
+      supported: false,
     }
-    const change = garmentEdgeChange(instruction, edge)
-    if (!change) continue
-    const operation: ShapingOperation = change > 0 ? 'increase' : 'decrease'
-    const rule = {
-      everyRows: instruction.rowNumber - previousChangeRow,
-      stitchCount: Math.abs(change),
-      repeatCount: 1,
-      operation,
-    }
-    previousChangeRow = instruction.rowNumber
-    if (operation === 'increase') totalIncreasedStitches += rule.stitchCount
-    else totalDecreasedStitches += rule.stitchCount
-    const previousRule = rules.at(-1)
-    if (
-      previousRule
-      && previousRule.operation === rule.operation
-      && previousRule.everyRows === rule.everyRows
-      && previousRule.stitchCount === rule.stitchCount
-    ) previousRule.repeatCount += 1
-    else rules.push(rule)
   }
+  const sequence = generateGarmentEdgeShapingSequence(instructions, edge)
+  const rules: ShapingRule[] = sequence.map((step) => ({
+    everyRows: step.everyRows,
+    stitchCount: step.stitchCount,
+    repeatCount: step.repeatCount,
+    operation: step.operation,
+  }))
+  const totalIncreasedStitches = sequence
+    .filter((step) => step.operation === 'increase')
+    .reduce((sum, step) => sum + step.stitchCount * step.repeatCount, 0)
+  const totalDecreasedStitches = sequence
+    .filter((step) => step.operation === 'decrease')
+    .reduce((sum, step) => sum + step.stitchCount * step.repeatCount, 0)
 
   return {
     edge,
@@ -221,6 +205,68 @@ export function generateGarmentEdgeShapingPlan(
     totalDecreasedStitches,
     supported: true,
   }
+}
+
+export function generateGarmentEdgeShapingSequence(
+  instructions: readonly KnittingInstruction[],
+  edge: GarmentEdgeRole,
+): ShapingSequenceStep[] {
+  if (instructions.some((instruction) => !instruction.supported)) return []
+  const sequence: ShapingSequenceStep[] = []
+  const isNeckEdge = edge === 'left-neck' || edge === 'right-neck'
+  let previousChangeRow = isNeckEdge
+    ? instructions.find((instruction) => instruction.transition === 'split')?.rowNumber ?? 0
+    : 0
+
+  for (const instruction of instructions) {
+    const change = garmentEdgeChange(instruction, edge)
+    if (!change) continue
+    const operation: ShapingOperation = change > 0 ? 'increase' : 'decrease'
+    const everyRows = instruction.rowNumber - previousChangeRow
+    const previousStep = sequence.at(-1)
+    if (
+      previousStep
+      && previousStep.operation === operation
+      && previousStep.everyRows === everyRows
+      && previousStep.stitchCount === Math.abs(change)
+    ) {
+      previousStep.repeatCount += 1
+      previousStep.endRowNumber = instruction.rowNumber
+      previousStep.endSourceRowIndex = instruction.sourceRowIndex
+    } else {
+      sequence.push({
+        order: sequence.length + 1,
+        edge,
+        label: garmentEdgeLabels[edge],
+        startRowNumber: previousChangeRow + 1,
+        endRowNumber: instruction.rowNumber,
+        startSourceRowIndex: instruction.sourceRowIndex,
+        endSourceRowIndex: instruction.sourceRowIndex,
+        everyRows,
+        stitchCount: Math.abs(change),
+        repeatCount: 1,
+        operation,
+      })
+    }
+    previousChangeRow = instruction.rowNumber
+  }
+  return sequence
+}
+
+export function stepNumberLabel(order: number): string {
+  const labels = [
+    '①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩',
+    '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳',
+  ]
+  return labels[order - 1] ?? `[${order}]`
+}
+
+export function shapingSequenceStepToText(step: ShapingSequenceStep): string {
+  const operation = step.operation === 'increase' ? '加' : '减'
+  const range = step.startRowNumber === step.endRowNumber
+    ? `第 ${step.startRowNumber} 行`
+    : `第 ${step.startRowNumber}–${step.endRowNumber} 行`
+  return `${range}：每 ${step.everyRows} 行${operation} ${step.stitchCount} 针，共 ${step.repeatCount} 次`
 }
 
 export function generateGarmentEdgeShapingPlans(

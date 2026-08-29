@@ -62,3 +62,13 @@ export interface GarmentEdgeShapingPlan
   edge: GarmentEdgeRole
   label: string
 }
+
+export interface ShapingSequenceStep extends ShapingRule {
+  order: number
+  edge: GarmentEdgeRole
+  label: string
+  startRowNumber: number
+  endRowNumber: number
+  startSourceRowIndex: number
+  endSourceRowIndex: number
+}

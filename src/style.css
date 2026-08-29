@@ -297,13 +297,20 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .shaping-rules-heading { align-self: center; }
 .shaping-rules-heading b { display: block; color: var(--ink); font-size: 11px; }
 .shaping-rules-heading span { display: block; margin-top: 4px; color: #8a857c; font-size: 9px; }
-.shaping-rules-heading code, .edge-rule-codes code { padding: 2px 5px; border-radius: 4px; color: #40574f; background: #e4ece8; font-family: ui-monospace, monospace; font-size: 9px; }
+.shaping-rules-heading code, .edge-rule-codes code, .edge-rule-sequence code { padding: 2px 5px; border-radius: 4px; color: #40574f; background: #e4ece8; font-family: ui-monospace, monospace; font-size: 9px; }
 .edge-rule-list { min-width: 0; display: grid; gap: 6px; }
 .edge-rule-row { min-width: 0; display: grid; grid-template-columns: 62px minmax(0, 1fr) auto; align-items: center; gap: 10px; }
 .edge-rule-side { color: #696e69; font-size: 9px; font-weight: 700; }
 .edge-rule-codes { min-width: 0; display: flex; flex-wrap: wrap; gap: 4px 6px; font-size: 9px; }
 .edge-rule-codes .plus { color: #237351; }
 .edge-rule-codes .minus { color: #b24631; }
+.edge-rule-sequence { min-width: 0; display: grid; gap: 3px; }
+.sequence-order { color: #287d72; font-size: 9px; font-weight: 700; }
+.sequence-step { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 5px; font-size: 9px; }
+.sequence-step b { color: #fff; background: #287d72; width: 17px; height: 17px; display: grid; place-items: center; border-radius: 50%; }
+.sequence-step.plus > span { color: #237351; }
+.sequence-step.minus > span { color: #b24631; }
+.sequence-step code { white-space: nowrap; }
 .edge-rule-empty, .edge-rule-total { color: #8a857c; font-size: 9px; }
 .edge-rule-total { white-space: nowrap; }
 .instruction-table-wrap { min-height: 0; flex: 1; overflow: auto; }

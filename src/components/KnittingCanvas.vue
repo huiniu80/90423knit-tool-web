@@ -48,6 +48,7 @@ interface AnnotationDraft {
   width: number
   height: number
   lines: string[]
+  markers: Array<{ label: string; x: number; y: number }>
 }
 
 interface OutlineShapingAnnotation extends Omit<AnnotationDraft, 'preferredY'> {
@@ -84,7 +85,7 @@ const annotationHovered = ref(false)
 let resizeObserver: ResizeObserver | null = null
 
 const canvasBoundaryPadding = 24
-const annotationWidth = 132
+const annotationWidth = 180
 const annotationLineHeight = 14
 const annotationPaddingX = 8
 const annotationPaddingY = 6
@@ -284,6 +285,11 @@ const shapingAnnotations = computed<OutlineShapingAnnotation[]>(() => {
       width: annotationWidth,
       height,
       lines,
+      markers: description.markers.map((marker) => ({
+        label: marker.label,
+        x: pan.value.x + marker.point.x * zoom.value,
+        y: pan.value.y + (fabric.value.heightCm - marker.point.y) * zoom.value,
+      })),
     })
   }
 
@@ -295,13 +301,13 @@ const shapingAnnotations = computed<OutlineShapingAnnotation[]>(() => {
 
 function annotationLineColor(line: string, lineIndex: number): string {
   if (lineIndex === 0) return '#287d72'
-  if (line.includes('加 ')) return '#237351'
-  if (line.includes('减 ')) return '#b24631'
+  if (line.includes('加')) return '#237351'
+  if (line.includes('减')) return '#b24631'
   return '#6f746f'
 }
 
 function annotationLineIsBold(line: string, lineIndex: number): boolean {
-  return lineIndex === 0 || line.includes('加 ') || line.includes('减 ')
+  return lineIndex === 0 || line.includes('加') || line.includes('减')
 }
 
 function toCanvasPoint(point: Point): Point {
@@ -1068,6 +1074,22 @@ defineExpose({ fitCanvas })
               stroke: '#b24631', strokeWidth: 1, opacity: 0.58,
               dash: [3, 3], listening: false,
             }" />
+          <template v-for="annotation in shapingAnnotations" :key="`${annotation.key}-markers`">
+            <v-group v-for="(marker, markerIndex) in annotation.markers"
+              :key="`${annotation.key}-marker-${markerIndex}`"
+              :config="{ x: marker.x, y: marker.y, listening: false }">
+              <v-circle :config="{
+                radius: 9, fill: '#287d72', stroke: '#fffdf8', strokeWidth: 2,
+                shadowColor: '#263d36', shadowBlur: 4, shadowOpacity: 0.2,
+              }" />
+              <v-text :config="{
+                x: -8, y: -7, width: 16, height: 14, text: marker.label,
+                align: 'center', verticalAlign: 'middle', fill: '#fffdf8',
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                fontSize: 10, fontStyle: 'bold', listening: false,
+              }" />
+            </v-group>
+          </template>
           <v-group v-for="annotation in shapingAnnotations" :key="annotation.key"
             :config="{ x: annotation.x, y: annotation.y, listening: activeTool !== 'path' }">
             <v-rect :config="{
