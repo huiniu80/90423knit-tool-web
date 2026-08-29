@@ -1,5 +1,11 @@
 import type { RasterRow, StitchSegment } from '../raster/raster.types'
-import type { KnitDirection, KnittingInstruction } from './planner.types'
+import type {
+  EdgeShapingPlan,
+  KnitDirection,
+  KnittingInstruction,
+  ShapingOperation,
+  ShapingSide,
+} from './planner.types'
 
 function activeSpan(rows: RasterRow[]): RasterRow[] {
   const first = rows.findIndex((row) => row.stitchCount > 0)
@@ -66,4 +72,62 @@ export function instructionToText(instruction: KnittingInstruction): string {
     describeChange('右侧', instruction.rightChange),
   ].filter(Boolean)
   return `第${instruction.rowNumber}行：${changes.length ? changes.join('，') : '不加不减'}`
+}
+
+export function generateEdgeShapingPlan(
+  instructions: readonly KnittingInstruction[],
+  side: ShapingSide,
+): EdgeShapingPlan {
+  const rules: EdgeShapingPlan['rules'] = []
+  let previousChangeRow = 0
+  let totalIncreasedStitches = 0
+  let totalDecreasedStitches = 0
+
+  for (const instruction of instructions) {
+    if (!instruction.supported) {
+      return {
+        side,
+        rules: [],
+        totalRows: 0,
+        totalIncreasedStitches: 0,
+        totalDecreasedStitches: 0,
+        supported: false,
+      }
+    }
+
+    const change = side === 'left' ? instruction.leftChange : instruction.rightChange
+    if (change === 0) continue
+
+    const operation: ShapingOperation = change > 0 ? 'increase' : 'decrease'
+    const everyRows = instruction.rowNumber - previousChangeRow
+    const stitchCount = Math.abs(change)
+    previousChangeRow = instruction.rowNumber
+
+    if (operation === 'increase') totalIncreasedStitches += stitchCount
+    else totalDecreasedStitches += stitchCount
+
+    const previousRule = rules.at(-1)
+    if (
+      previousRule
+      && previousRule.operation === operation
+      && previousRule.everyRows === everyRows
+      && previousRule.stitchCount === stitchCount
+    ) {
+      previousRule.repeatCount += 1
+    } else {
+      rules.push({ everyRows, stitchCount, repeatCount: 1, operation })
+    }
+  }
+
+  return {
+    side,
+    rules,
+    totalRows: rules.reduce(
+      (sum, rule) => sum + rule.everyRows * rule.repeatCount,
+      0,
+    ),
+    totalIncreasedStitches,
+    totalDecreasedStitches,
+    supported: true,
+  }
 }

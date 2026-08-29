@@ -1,12 +1,15 @@
 import type { GaugeInput, FabricCanvas } from '../core/gauge/gauge.types'
 import type { Shape } from '../core/geometry/shape.types'
 import type { KnitDirection } from '../core/knitting/planner.types'
+import type { KnittingInstruction } from '../core/knitting/planner.types'
 import type { RasterOptions } from '../core/raster/raster.types'
+import type { RasterRow } from '../core/raster/raster.types'
 
 export type EditorTool =
   | 'select'
   | 'pan'
   | 'polygon'
+  | 'path'
   | 'rectangle'
   | 'triangle'
   | 'circle'
@@ -14,11 +17,25 @@ export type EditorTool =
 
 export type ViewMode = 'outline' | 'grid' | 'overlay'
 
+export interface ShapePlan {
+  shapeId: string
+  shapeName?: string
+  shapeType: Shape['type']
+  rasterRows: RasterRow[]
+  instructions: KnittingInstruction[]
+  totalStitches: number
+  hasSeparatedRegions: boolean
+}
+
 export interface KnittingProject {
-  version: 1
+  version: 2
   gauge: GaugeInput
   canvas: FabricCanvas
   direction: KnitDirection
   rasterOptions: RasterOptions
   shapes: Shape[]
+}
+
+export type ImportableKnittingProject = Omit<KnittingProject, 'version'> & {
+  version: 1 | 2
 }

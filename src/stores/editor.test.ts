@@ -27,12 +27,73 @@ describe('Editor Store', () => {
     expect(store.shapes).toHaveLength(initialCount + 1)
   })
 
-  it('导出数据使用 version 1 格式并可再次导入', () => {
+  it('每个图形独立生成计划，画布针格保持全部图形并集', () => {
+    const store = useEditorStore()
+    const starterId = store.shapes[0]!.id
+    store.addPath([
+      { anchor: { x: 2, y: 2 } },
+      { anchor: { x: 12, y: 6 } },
+    ], false)
+    const pathId = store.selectedShapeId!
+
+    expect(store.shapePlans).toHaveLength(store.shapes.length)
+    expect(store.selectedPlanShapeId).toBe(pathId)
+    expect(store.selectedShapePlan?.shapeType).toBe('path')
+    expect(store.selectedShapePlan?.instructions.length).toBeGreaterThan(0)
+
+    const aggregateBefore = JSON.stringify(store.rasterRows)
+    store.selectedPlanShapeId = starterId
+    expect(JSON.stringify(store.rasterRows)).toBe(aggregateBefore)
+    expect(store.selectedShapePlan?.shapeId).toBe(starterId)
+  })
+
+  it('在画布上选中哪条路径，就切换到对应的逐行指令', () => {
+    const store = useEditorStore()
+    const firstShapeId = store.shapes[0]!.id
+    store.addPath([
+      { anchor: { x: 2, y: 2 } },
+      { anchor: { x: 18, y: 12 } },
+    ], false)
+    const secondShapeId = store.selectedShapeId!
+
+    store.selectedShapeId = firstShapeId
+    expect(store.selectedPlanShapeId).toBe(firstShapeId)
+    expect(store.selectedShapePlan?.shapeId).toBe(firstShapeId)
+
+    store.selectedShapeId = secondShapeId
+    expect(store.selectedPlanShapeId).toBe(secondShapeId)
+    expect(store.selectedShapePlan?.shapeId).toBe(secondShapeId)
+  })
+
+  it('对象计划名称实时更新且删除后回退到有效对象', () => {
+    const store = useEditorStore()
+    store.addDefaultShape('circle')
+    const circleId = store.selectedShapeId!
+    const circle = store.selectedShape!
+    store.replaceShape({ ...circle, name: '袖笼圆弧' })
+    expect(store.selectedShapePlan?.shapeName).toBe('袖笼圆弧')
+
+    store.deleteSelected()
+    expect(store.shapePlans.some((plan) => plan.shapeId === circleId)).toBe(false)
+    expect(store.selectedPlanShapeId).not.toBe(circleId)
+    expect(store.shapePlans.some((plan) => plan.shapeId === store.selectedPlanShapeId)).toBe(true)
+  })
+
+  it('导入项目后指令对象回到首个有效图形', () => {
+    const store = useEditorStore()
+    store.addDefaultShape('rectangle')
+    const project = store.exportProject()
+    store.addDefaultShape('circle')
+    store.importProject(project)
+    expect(store.selectedPlanShapeId).toBe(project.shapes[0]?.id)
+  })
+
+  it('导出数据使用 version 2 格式并可再次导入', () => {
     const store = useEditorStore()
     store.direction = 'top-down'
     const project = store.exportProject()
 
-    expect(project.version).toBe(1)
+    expect(project.version).toBe(2)
     expect(project.direction).toBe('top-down')
 
     store.shapes = []
@@ -44,8 +105,53 @@ describe('Editor Store', () => {
   it('拒绝不支持的项目版本', () => {
     const store = useEditorStore()
     const project = store.exportProject()
-    expect(() => store.importProject({ ...project, version: 2 } as never)).toThrow(
+    expect(() => store.importProject({ ...project, version: 3 } as never)).toThrow(
       '不支持的项目文件版本',
     )
+  })
+
+  it('继续接受 version 1 项目文件', () => {
+    const store = useEditorStore()
+    const project = { ...store.exportProject(), version: 1 as const }
+    store.shapes = []
+    store.importProject(project)
+    expect(store.shapes.length).toBeGreaterThan(0)
+  })
+
+  it('路径创建和控制点修改可撤销与重做', () => {
+    const store = useEditorStore()
+    store.addPath([
+      { anchor: { x: 1, y: 1 } },
+      { anchor: { x: 8, y: 1 } },
+    ], false)
+    const path = store.selectedShape
+    expect(path?.type).toBe('path')
+    if (!path || path.type !== 'path') return
+
+    store.beginShapeMutation()
+    store.updateShapeLive({
+      ...path,
+      nodes: [
+        { ...path.nodes[0]!, outControl: { x: 3, y: 5 } },
+        { ...path.nodes[1]!, inControl: { x: 6, y: 4 } },
+      ],
+    })
+    store.commitShapeMutation()
+    expect(store.selectedShape?.type === 'path' && store.selectedShape.nodes[0]?.outControl).toEqual({ x: 3, y: 5 })
+
+    store.undo()
+    expect(store.selectedShape?.type === 'path' && store.selectedShape.nodes[0]?.outControl).toBeUndefined()
+    store.redo()
+    expect(store.selectedShape?.type === 'path' && store.selectedShape.nodes[1]?.inControl).toEqual({ x: 6, y: 4 })
+  })
+
+  it('拒绝无效的路径数据', () => {
+    const store = useEditorStore()
+    const project = store.exportProject()
+    project.shapes = [{
+      id: 'bad-path', type: 'path', closed: true,
+      nodes: [{ anchor: { x: 1, y: 1 } }, { anchor: { x: 2, y: 2 } }],
+    }]
+    expect(() => store.importProject(project)).toThrow('路径数据无效')
   })
 })

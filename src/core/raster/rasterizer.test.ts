@@ -75,4 +75,79 @@ describe('Rasterizer', () => {
       active.map((row) => row.stitchCount).reverse(),
     )
   })
+
+  it('开放路径按曲线经过的针格生成针格，闭合路径仍按面积计算', () => {
+    const path: Shape = {
+      id: 'path', type: 'path', closed: false,
+      nodes: [
+        { anchor: { x: 2, y: 0 }, outControl: { x: 2, y: 4 } },
+        { anchor: { x: 8, y: 0 }, inControl: { x: 8, y: 4 } },
+        { anchor: { x: 8, y: 6 } },
+        { anchor: { x: 2, y: 6 } },
+      ],
+    }
+    const openRows = rasterize(path, gauge, canvas, {
+      mode: 'center', symmetryOptimization: true,
+    })
+    expect(openRows.some((row) => row.stitchCount > 0)).toBe(true)
+
+    const closedRows = rasterize({ ...path, closed: true }, gauge, canvas, {
+      mode: 'center', symmetryOptimization: true,
+    })
+    expect(closedRows.some((row) => row.stitchCount > 0)).toBe(true)
+  })
+
+  it('水平开放线生成单行连续针段', () => {
+    const shape: Shape = {
+      id: 'horizontal', type: 'path', closed: false,
+      nodes: [{ anchor: { x: 2, y: 1.2 } }, { anchor: { x: 7.9, y: 1.2 } }],
+    }
+    const active = rasterize(shape, gauge, canvas, {
+      mode: 'inside', symmetryOptimization: false,
+    }).filter((row) => row.stitchCount > 0)
+    expect(active).toHaveLength(1)
+    expect(active[0]?.segments).toEqual([{ startStitch: 2, endStitch: 7 }])
+  })
+
+  it('竖直开放线在每个经过行保持单针宽', () => {
+    const shape: Shape = {
+      id: 'vertical', type: 'path', closed: false,
+      nodes: [{ anchor: { x: 4.2, y: 0 } }, { anchor: { x: 4.2, y: 3 } }],
+    }
+    const active = rasterize(shape, gauge, canvas, {
+      mode: 'outside', symmetryOptimization: false,
+    }).filter((row) => row.stitchCount > 0)
+    expect(active).toHaveLength(6)
+    expect(active.every((row) => row.segments[0]?.startStitch === 4 && row.stitchCount === 1)).toBe(true)
+  })
+
+  it('斜线与弧线栅格连续且不受面积离散策略影响', () => {
+    const arc: Shape = {
+      id: 'arc', type: 'path', closed: false,
+      nodes: [
+        { anchor: { x: 2, y: 1 }, outControl: { x: 2, y: 7 } },
+        { anchor: { x: 10, y: 1 }, inControl: { x: 10, y: 7 } },
+      ],
+    }
+    const center = rasterize(arc, gauge, canvas, {
+      mode: 'center', symmetryOptimization: true,
+    })
+    const inside = rasterize(arc, gauge, canvas, {
+      mode: 'inside', symmetryOptimization: true,
+    })
+    expect(inside).toEqual(center)
+    expect(center.filter((row) => row.stitchCount > 0).length).toBeGreaterThan(5)
+  })
+
+  it('开放线超出画布的部分被裁剪且不会沿边缘涂抹', () => {
+    const shape: Shape = {
+      id: 'clipped-line', type: 'path', closed: false,
+      nodes: [{ anchor: { x: -20, y: 1.2 } }, { anchor: { x: 3.2, y: 1.2 } }],
+    }
+    const active = rasterize(shape, gauge, canvas, {
+      mode: 'center', symmetryOptimization: false,
+    }).filter((row) => row.stitchCount > 0)
+    expect(active).toHaveLength(1)
+    expect(active[0]?.segments).toEqual([{ startStitch: 0, endStitch: 3 }])
+  })
 })

@@ -6,7 +6,7 @@ import InstructionPanel from '../components/InstructionPanel.vue'
 import KnittingCanvas from '../components/KnittingCanvas.vue'
 import ShapePropertyPanel from '../components/ShapePropertyPanel.vue'
 import { useEditorStore } from '../stores/editor'
-import type { KnittingProject } from '../stores/editor.types'
+import type { ImportableKnittingProject } from '../stores/editor.types'
 
 const store = useEditorStore()
 const canvasRef = ref<InstanceType<typeof KnittingCanvas> | null>(null)
@@ -38,7 +38,7 @@ async function importJson(event: Event): Promise<void> {
   const file = input.files?.[0]
   if (!file) return
   try {
-    const project = JSON.parse(await file.text()) as KnittingProject
+    const project = JSON.parse(await file.text()) as ImportableKnittingProject
     store.importProject(project)
     showNotice('项目已成功导入')
   } catch (error) {

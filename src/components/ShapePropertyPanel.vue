@@ -15,6 +15,7 @@ const typeLabels = {
   circle: '圆形',
   ellipse: '椭圆',
   polygon: '多边形',
+  path: '路径',
 }
 
 function updateBound(key: keyof Bounds, event: Event): void {
@@ -28,6 +29,12 @@ function updateName(event: Event): void {
   if (!selectedShape.value) return
   const name = (event.target as HTMLInputElement).value.trim()
   store.replaceShape({ ...selectedShape.value, name: name || undefined })
+}
+
+function togglePathClosed(): void {
+  if (selectedShape.value?.type !== 'path') return
+  if (!selectedShape.value.closed && selectedShape.value.nodes.length < 3) return
+  store.replaceShape({ ...selectedShape.value, closed: !selectedShape.value.closed })
 }
 </script>
 
@@ -54,6 +61,20 @@ function updateName(event: Event): void {
       </div>
       <p v-if="selectedShape.type === 'polygon'" class="property-tip">双击轮廓边添加节点；选中节点后按 Delete 删除。
       </p>
+      <div v-if="selectedShape.type === 'path'" class="path-property-block">
+        <div class="path-status-row">
+          <span>{{ selectedShape.nodes.length }} 个锚点</span>
+          <button type="button" :disabled="!selectedShape.closed && selectedShape.nodes.length < 3"
+            @click="togglePathClosed">
+            {{ selectedShape.closed ? '打开路径' : '闭合路径' }}
+          </button>
+        </div>
+        <p class="property-tip">
+          {{ selectedShape.closed
+            ? '闭合路径会参与针格和针法计算。拖动橙色中点弯曲边，绿色手柄可精调。'
+            : '开放路径会按曲线经过的针格生成独立指令。拖动橙色中点可调整弧线。' }}
+        </p>
+      </div>
     </div>
     <div v-else class="empty-property">
       <span>◇</span>

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { RasterRow } from '../raster/raster.types'
-import { generateInstructions, instructionToText } from './planner'
+import {
+  generateEdgeShapingPlan,
+  generateInstructions,
+  instructionToText,
+} from './planner'
 
 function row(rowIndex: number, startStitch: number, endStitch: number): RasterRow {
   return {
@@ -55,5 +59,71 @@ describe('Knitting Planner', () => {
     const result = generateInstructions([multiple], 'bottom-up')
     expect(result[0]?.supported).toBe(false)
     expect(instructionToText(result[0]!)).toContain('分离区域')
+  })
+
+  it('按单侧边界生成连续的 x-y-z 减针阶段', () => {
+    const starts = [
+      0,
+      3, 3,
+      6, 6,
+      9, 9,
+      12, 12,
+      16, 16,
+      20, 20,
+      24,
+    ]
+    const rows = starts.map((startStitch, rowIndex) => row(rowIndex, startStitch, 40))
+    const instructions = generateInstructions(rows, 'bottom-up')
+    const plan = generateEdgeShapingPlan(instructions, 'left')
+
+    expect(plan.rules).toEqual([
+      { everyRows: 2, stitchCount: 3, repeatCount: 4, operation: 'decrease' },
+      { everyRows: 2, stitchCount: 4, repeatCount: 3, operation: 'decrease' },
+    ])
+    expect(plan.totalRows).toBe(14)
+    expect(plan.totalDecreasedStitches).toBe(24)
+    expect(plan.totalIncreasedStitches).toBe(0)
+  })
+
+  it('左右边界分别计算，不合并针数', () => {
+    const instructions = generateInstructions(
+      [row(0, 3, 9), row(1, 2, 10), row(2, 1, 11)],
+      'bottom-up',
+    )
+
+    expect(generateEdgeShapingPlan(instructions, 'left').rules).toEqual([
+      { everyRows: 2, stitchCount: 1, repeatCount: 1, operation: 'increase' },
+      { everyRows: 1, stitchCount: 1, repeatCount: 1, operation: 'increase' },
+    ])
+    expect(generateEdgeShapingPlan(instructions, 'right').rules).toEqual([
+      { everyRows: 2, stitchCount: 1, repeatCount: 1, operation: 'increase' },
+      { everyRows: 1, stitchCount: 1, repeatCount: 1, operation: 'increase' },
+    ])
+  })
+
+  it('加针和减针阶段保持原有顺序', () => {
+    const instructions = generateInstructions(
+      [row(0, 3, 9), row(1, 2, 9), row(2, 3, 9)],
+      'bottom-up',
+    )
+    const plan = generateEdgeShapingPlan(instructions, 'left')
+
+    expect(plan.rules.map((rule) => rule.operation)).toEqual(['increase', 'decrease'])
+    expect(plan.totalIncreasedStitches).toBe(1)
+    expect(plan.totalDecreasedStitches).toBe(1)
+  })
+
+  it('分离区域不生成可能误导的 x-y-z 规律', () => {
+    const multiple: RasterRow = {
+      rowIndex: 1,
+      yCm: 1.5,
+      segments: [{ startStitch: 0, endStitch: 2 }, { startStitch: 5, endStitch: 7 }],
+      stitchCount: 6,
+    }
+    const instructions = generateInstructions([row(0, 0, 7), multiple], 'bottom-up')
+    const plan = generateEdgeShapingPlan(instructions, 'left')
+
+    expect(plan.supported).toBe(false)
+    expect(plan.rules).toEqual([])
   })
 })

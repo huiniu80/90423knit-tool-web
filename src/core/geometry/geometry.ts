@@ -1,6 +1,7 @@
 import { getCircleIntervals } from './circle'
 import { getEllipseIntervals } from './ellipse'
 import { getPolygonIntervals } from './polygon'
+import { getPathBounds, getPathIntervals } from './path'
 import { getRectangleIntervals } from './rectangle'
 import { getTriangleIntervals } from './triangle'
 import type {
@@ -25,6 +26,8 @@ export function getHorizontalIntervals(
       return getEllipseIntervals(shape, yCm)
     case 'polygon':
       return getPolygonIntervals(shape.points, yCm)
+    case 'path':
+      return getPathIntervals(shape, yCm)
   }
 }
 
@@ -62,6 +65,8 @@ export function getShapeBounds(shape: Shape): Bounds {
     case 'triangle':
     case 'polygon':
       return boundsFromPoints(shape.points)
+    case 'path':
+      return getPathBounds(shape)
   }
 }
 
@@ -89,6 +94,19 @@ export function translateShape(shape: Shape, deltaX: number, deltaY: number): Sh
         points: shape.points.map((point) => ({
           x: point.x + deltaX,
           y: point.y + deltaY,
+        })),
+      }
+    case 'path':
+      return {
+        ...shape,
+        nodes: shape.nodes.map((node) => ({
+          anchor: { x: node.anchor.x + deltaX, y: node.anchor.y + deltaY },
+          inControl: node.inControl
+            ? { x: node.inControl.x + deltaX, y: node.inControl.y + deltaY }
+            : undefined,
+          outControl: node.outControl
+            ? { x: node.outControl.x + deltaX, y: node.outControl.y + deltaY }
+            : undefined,
         })),
       }
   }
@@ -130,5 +148,14 @@ export function resizeShapeToBounds(shape: Shape, next: Bounds): Shape {
       }
     case 'polygon':
       return { ...shape, points: shape.points.map(resizePoint) }
+    case 'path':
+      return {
+        ...shape,
+        nodes: shape.nodes.map((node) => ({
+          anchor: resizePoint(node.anchor),
+          inControl: node.inControl ? resizePoint(node.inControl) : undefined,
+          outControl: node.outControl ? resizePoint(node.outControl) : undefined,
+        })),
+      }
   }
 }

@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { getHorizontalIntervals, getShapeBounds, resizeShapeToBounds } from './geometry'
-import type { Shape } from './shape.types'
+import {
+  bendPathSegment,
+  evaluatePathSegment,
+  findNearestOpenPathEndpoint,
+  flattenPath,
+  splitPathSegment,
+} from './path'
+import type { PathShape, Shape } from './shape.types'
 
 describe('Geometry Engine', () => {
   it('矩形返回稳定的单区间', () => {
@@ -61,5 +68,143 @@ describe('Geometry Engine', () => {
     const shape: Shape = { id: 'r', type: 'rectangle', x: 1, y: 2, widthCm: 3, heightCm: 4 }
     const resized = resizeShapeToBounds(shape, { x: 5, y: 6, width: 9, height: 8 })
     expect(getShapeBounds(resized)).toEqual({ x: 5, y: 6, width: 9, height: 8 })
+  })
+
+  it('开放路径不产生扫描区间，闭合直线路径可复用多边形扫描', () => {
+    const path: Shape = {
+      id: 'path', type: 'path', closed: false,
+      nodes: [
+        { anchor: { x: 1, y: 1 } }, { anchor: { x: 5, y: 1 } },
+        { anchor: { x: 5, y: 5 } }, { anchor: { x: 1, y: 5 } },
+      ],
+    }
+    expect(getHorizontalIntervals(path, 3)).toEqual([])
+    expect(getHorizontalIntervals({ ...path, closed: true }, 3)).toEqual([{ startX: 1, endX: 5 }])
+  })
+
+  it('新路径点击位置接近已有开放路径端点时吸附到精确坐标', () => {
+    const paths: PathShape[] = [
+      {
+        id: 'open', type: 'path', closed: false,
+        nodes: [{ anchor: { x: 2, y: 3 } }, { anchor: { x: 8, y: 5 } }],
+      },
+      {
+        id: 'closed', type: 'path', closed: true,
+        nodes: [
+          { anchor: { x: 10, y: 10 } },
+          { anchor: { x: 12, y: 10 } },
+          { anchor: { x: 11, y: 12 } },
+        ],
+      },
+    ]
+    const snap = findNearestOpenPathEndpoint(paths, { x: 8.2, y: 5.1 }, 0.3)
+    expect(snap?.point).toEqual({ x: 8, y: 5 })
+    expect(snap?.nodeIndex).toBe(1)
+    expect(findNearestOpenPathEndpoint(paths, { x: 8.5, y: 5.5 }, 0.3)).toBeNull()
+    expect(findNearestOpenPathEndpoint(paths, { x: 10, y: 10 }, 0.3)).toBeNull()
+  })
+
+  it('闭合凹路径在同一扫描行保留分离区间', () => {
+    const path: Shape = {
+      id: 'concave-path', type: 'path', closed: true,
+      nodes: [
+        { anchor: { x: 0, y: 0 } }, { anchor: { x: 6, y: 0 } },
+        { anchor: { x: 6, y: 6 } }, { anchor: { x: 4, y: 6 } },
+        { anchor: { x: 4, y: 2 } }, { anchor: { x: 2, y: 2 } },
+        { anchor: { x: 2, y: 6 } }, { anchor: { x: 0, y: 6 } },
+      ],
+    }
+    expect(getHorizontalIntervals(path, 4)).toEqual([
+      { startX: 0, endX: 2 },
+      { startX: 4, endX: 6 },
+    ])
+  })
+
+  it('贝塞尔边界包含曲线极值而不是只包含锚点', () => {
+    const path: Shape = {
+      id: 'arc', type: 'path', closed: false,
+      nodes: [
+        { anchor: { x: 0, y: 0 }, outControl: { x: 0, y: 8 } },
+        { anchor: { x: 10, y: 0 }, inControl: { x: 10, y: 8 } },
+      ],
+    }
+    const bounds = getShapeBounds(path)
+    expect(bounds.x).toBeCloseTo(0)
+    expect(bounds.width).toBeCloseTo(10)
+    expect(bounds.height).toBeCloseTo(6)
+  })
+
+  it('拖动边中点后曲线经过目标位置，并可独立保留控制手柄', () => {
+    const path: Shape = {
+      id: 'bend', type: 'path', closed: false,
+      nodes: [{ anchor: { x: 0, y: 0 } }, { anchor: { x: 8, y: 0 } }],
+    }
+    const bent = bendPathSegment(path, 0, { x: 4, y: 3 })
+    expect(evaluatePathSegment(bent, 0, 0.5)).toEqual({ x: 4, y: 3 })
+    expect(bent.nodes[0]?.outControl).toBeDefined()
+    expect(bent.nodes[1]?.inControl).toBeDefined()
+  })
+
+  it('S 曲线自适应细分后保留两侧弯曲趋势', () => {
+    const path: Shape = {
+      id: 's-curve', type: 'path', closed: false,
+      nodes: [
+        { anchor: { x: 0, y: 0 }, outControl: { x: 3, y: 8 } },
+        { anchor: { x: 10, y: 0 }, inControl: { x: 7, y: -8 } },
+      ],
+    }
+    const points = flattenPath(path)
+    expect(points.some((point) => point.y > 2)).toBe(true)
+    expect(points.some((point) => point.y < -2)).toBe(true)
+  })
+
+  it('扫描线经过曲线水平切点时不产生重复区间', () => {
+    const path: Shape = {
+      id: 'tangent', type: 'path', closed: true,
+      nodes: [
+        { anchor: { x: 0, y: 0 }, outControl: { x: 0, y: 8 } },
+        { anchor: { x: 8, y: 0 }, inControl: { x: 8, y: 8 } },
+        { anchor: { x: 4, y: 0 } },
+      ],
+    }
+    expect(getHorizontalIntervals(path, 6)).toEqual([])
+    expect(getHorizontalIntervals(path, 5.5)).toHaveLength(1)
+  })
+
+  it('用 de Casteljau 插入锚点后曲线轮廓不变', () => {
+    const path: Shape = {
+      id: 'split', type: 'path', closed: false,
+      nodes: [
+        { anchor: { x: 0, y: 0 }, outControl: { x: 2, y: 6 } },
+        { anchor: { x: 8, y: 0 }, inControl: { x: 6, y: -4 } },
+      ],
+    }
+    const splitT = 0.4
+    const result = splitPathSegment(path, 0, splitT)
+    expect(result.path.nodes).toHaveLength(3)
+    for (const t of [0.1, 0.3, 0.6, 0.9]) {
+      const before = evaluatePathSegment(path, 0, t)
+      const after = t <= splitT
+        ? evaluatePathSegment(result.path, 0, t / splitT)
+        : evaluatePathSegment(result.path, 1, (t - splitT) / (1 - splitT))
+      expect(after.x).toBeCloseTo(before.x, 8)
+      expect(after.y).toBeCloseTo(before.y, 8)
+    }
+  })
+
+  it('整体缩放路径时锚点和控制点使用同一坐标变换', () => {
+    const path: Shape = {
+      id: 'resize-path', type: 'path', closed: false,
+      nodes: [
+        { anchor: { x: 0, y: 0 }, outControl: { x: 1, y: 2 } },
+        { anchor: { x: 4, y: 0 }, inControl: { x: 3, y: 2 } },
+      ],
+    }
+    const resized = resizeShapeToBounds(path, { x: 10, y: 20, width: 8, height: 6 })
+    expect(resized.type).toBe('path')
+    if (resized.type !== 'path') return
+    expect(resized.nodes[0]?.anchor).toEqual({ x: 10, y: 20 })
+    expect(resized.nodes[0]?.outControl).toEqual({ x: 12, y: 28 })
+    expect(resized.nodes[1]?.anchor).toEqual({ x: 18, y: 20 })
   })
 })

@@ -51,11 +51,24 @@ export interface PolygonShape extends BaseShape {
   points: Point[]
 }
 
+export interface PathNode {
+  anchor: Point
+  inControl?: Point
+  outControl?: Point
+}
+
+export interface PathShape extends BaseShape {
+  type: 'path'
+  nodes: PathNode[]
+  closed: boolean
+}
+
 export type Shape =
   | RectangleShape
   | TriangleShape
   | CircleShape
   | EllipseShape
   | PolygonShape
+  | PathShape
 
 export type ShapeType = Shape['type']

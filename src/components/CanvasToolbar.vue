@@ -10,18 +10,10 @@ const { activeTool, canUndo, canRedo, zoom, viewMode } = storeToRefs(store)
 const tools: Array<{ id: EditorTool; icon: string; label: string }> = [
   { id: 'select', icon: '↖', label: '选择' },
   { id: 'pan', icon: '✋', label: '平移' },
-  { id: 'polygon', icon: '⬠', label: '多边形' },
-  { id: 'rectangle', icon: '▭', label: '矩形' },
-  { id: 'triangle', icon: '△', label: '三角形' },
-  { id: 'circle', icon: '○', label: '圆' },
-  { id: 'ellipse', icon: '⬭', label: '椭圆' },
+  { id: 'path', icon: '⌁', label: '路径' },
 ]
 
 function chooseTool(tool: EditorTool): void {
-  if (tool === 'rectangle' || tool === 'triangle' || tool === 'circle' || tool === 'ellipse') {
-    store.addDefaultShape(tool)
-    return
-  }
   activeTool.value = tool
 }
 

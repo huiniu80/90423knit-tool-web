@@ -1,13 +1,19 @@
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { calculateFabricGrid, calculateGauge } from '../core/gauge/gauge'
 import type { GaugeInput, FabricCanvas } from '../core/gauge/gauge.types'
-import type { Point, Shape, ShapeType } from '../core/geometry/shape.types'
+import type { PathNode, PathShape, Point, Shape, ShapeType } from '../core/geometry/shape.types'
 import { generateInstructions } from '../core/knitting/planner'
 import type { KnitDirection } from '../core/knitting/planner.types'
-import { rasterizeShapes } from '../core/raster/rasterizer'
+import { rasterize, rasterizeShapes } from '../core/raster/rasterizer'
 import type { RasterOptions } from '../core/raster/raster.types'
-import type { EditorTool, KnittingProject, ViewMode } from './editor.types'
+import type {
+  EditorTool,
+  ImportableKnittingProject,
+  KnittingProject,
+  ShapePlan,
+  ViewMode,
+} from './editor.types'
 
 function clonePlain<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -17,6 +23,23 @@ const cloneShapes = (value: Shape[]): Shape[] => clonePlain(value)
 
 function createId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `shape-${Date.now()}-${Math.random()}`
+}
+
+function isFinitePoint(value: unknown): value is Point {
+  if (!value || typeof value !== 'object') return false
+  const point = value as Point
+  return Number.isFinite(point.x) && Number.isFinite(point.y)
+}
+
+function isValidPath(shape: PathShape): boolean {
+  return Array.isArray(shape.nodes) &&
+    shape.nodes.length >= 2 &&
+    (!shape.closed || shape.nodes.length >= 3) &&
+    shape.nodes.every((node) =>
+      isFinitePoint(node.anchor) &&
+      (node.inControl === undefined || isFinitePoint(node.inControl)) &&
+      (node.outControl === undefined || isFinitePoint(node.outControl)),
+    )
 }
 
 function starterShapes(): Shape[] {
@@ -44,6 +67,7 @@ export const useEditorStore = defineStore('editor', () => {
   const fabric = ref<FabricCanvas>({ widthCm: 30, heightCm: 30 })
   const shapes = ref<Shape[]>(starterShapes())
   const selectedShapeId = ref<string | null>(shapes.value[0]?.id ?? null)
+  const selectedPlanShapeId = ref<string | null>(shapes.value[0]?.id ?? null)
   const zoom = ref(20)
   const direction = ref<KnitDirection>('bottom-up')
   const rasterOptions = ref<RasterOptions>({
@@ -65,12 +89,37 @@ export const useEditorStore = defineStore('editor', () => {
   const rasterRows = computed(() =>
     rasterizeShapes(shapes.value, gauge.value, fabric.value, rasterOptions.value),
   )
-  const instructions = computed(() =>
-    generateInstructions(rasterRows.value, direction.value),
+  const shapePlans = computed<ShapePlan[]>(() => shapes.value.map((shape) => {
+    const rows = rasterize(shape, gauge.value, fabric.value, rasterOptions.value)
+    const planInstructions = generateInstructions(rows, direction.value)
+    return {
+      shapeId: shape.id,
+      shapeName: shape.name,
+      shapeType: shape.type,
+      rasterRows: rows,
+      instructions: planInstructions,
+      totalStitches: planInstructions.reduce((sum, item) => sum + item.stitchCount, 0),
+      hasSeparatedRegions: rows.some((row) => row.segments.length > 1),
+    }
+  }))
+  const selectedShapePlan = computed(() =>
+    shapePlans.value.find((plan) => plan.shapeId === selectedPlanShapeId.value) ?? null,
   )
-  const hasSeparatedRegions = computed(() =>
-    rasterRows.value.some((row) => row.segments.length > 1),
-  )
+  const instructions = computed(() => selectedShapePlan.value?.instructions ?? [])
+  const hasSeparatedRegions = computed(() => selectedShapePlan.value?.hasSeparatedRegions ?? false)
+
+  function ensureSelectedPlan(): void {
+    if (!shapes.value.some((shape) => shape.id === selectedPlanShapeId.value)) {
+      selectedPlanShapeId.value = shapes.value.at(-1)?.id ?? null
+    }
+  }
+
+  watch(() => shapes.value.map((shape) => shape.id), ensureSelectedPlan)
+  watch(selectedShapeId, (shapeId) => {
+    if (shapeId && shapes.value.some((shape) => shape.id === shapeId)) {
+      selectedPlanShapeId.value = shapeId
+    }
+  }, { flush: 'sync' })
 
   function pushUndo(snapshot: Shape[]): void {
     undoStack.value.push(cloneShapes(snapshot))
@@ -103,10 +152,11 @@ export const useEditorStore = defineStore('editor', () => {
     pushUndo(shapes.value)
     shapes.value.push(shape)
     selectedShapeId.value = shape.id
+    selectedPlanShapeId.value = shape.id
     activeTool.value = 'select'
   }
 
-  function addDefaultShape(type: Exclude<ShapeType, 'polygon'>): void {
+  function addDefaultShape(type: Exclude<ShapeType, 'polygon' | 'path'>): void {
     const centerX = fabric.value.widthCm / 2
     const centerY = fabric.value.heightCm / 2
     const id = createId()
@@ -148,11 +198,22 @@ export const useEditorStore = defineStore('editor', () => {
     addShape({ id: createId(), name: '自由多边形', type: 'polygon', points })
   }
 
+  function addPath(nodes: PathNode[], closed: boolean): void {
+    addShape({
+      id: createId(),
+      name: closed ? '自定义闭合路径' : '自定义开放路径',
+      type: 'path',
+      nodes,
+      closed,
+    })
+  }
+
   function deleteSelected(): void {
     if (!selectedShapeId.value) return
     pushUndo(shapes.value)
     shapes.value = shapes.value.filter((shape) => shape.id !== selectedShapeId.value)
     selectedShapeId.value = shapes.value.at(-1)?.id ?? null
+    ensureSelectedPlan()
   }
 
   function undo(): void {
@@ -163,6 +224,7 @@ export const useEditorStore = defineStore('editor', () => {
     if (!shapes.value.some((shape) => shape.id === selectedShapeId.value)) {
       selectedShapeId.value = shapes.value.at(-1)?.id ?? null
     }
+    ensureSelectedPlan()
   }
 
   function redo(): void {
@@ -170,11 +232,12 @@ export const useEditorStore = defineStore('editor', () => {
     if (!next) return
     undoStack.value.push(cloneShapes(shapes.value))
     shapes.value = cloneShapes(next)
+    ensureSelectedPlan()
   }
 
   function exportProject(): KnittingProject {
     return {
-      version: 1,
+      version: 2,
       gauge: clonePlain(gaugeInput.value),
       canvas: clonePlain(fabric.value),
       direction: direction.value,
@@ -183,9 +246,15 @@ export const useEditorStore = defineStore('editor', () => {
     }
   }
 
-  function importProject(project: KnittingProject): void {
-    if (project.version !== 1 || !Array.isArray(project.shapes)) {
+  function importProject(project: ImportableKnittingProject): void {
+    if ((project.version !== 1 && project.version !== 2) || !Array.isArray(project.shapes)) {
       throw new Error('不支持的项目文件版本')
+    }
+    if (project.version === 1 && project.shapes.some((shape) => shape.type === 'path')) {
+      throw new Error('version 1 项目不能包含路径图形')
+    }
+    if (project.shapes.some((shape) => shape.type === 'path' && !isValidPath(shape))) {
+      throw new Error('路径数据无效')
     }
     calculateGauge(project.gauge)
     calculateFabricGrid(project.canvas, calculateGauge(project.gauge))
@@ -196,6 +265,7 @@ export const useEditorStore = defineStore('editor', () => {
     rasterOptions.value = clonePlain(project.rasterOptions)
     shapes.value = cloneShapes(project.shapes)
     selectedShapeId.value = shapes.value[0]?.id ?? null
+    selectedPlanShapeId.value = shapes.value[0]?.id ?? null
   }
 
   return {
@@ -203,6 +273,7 @@ export const useEditorStore = defineStore('editor', () => {
     fabric,
     shapes,
     selectedShapeId,
+    selectedPlanShapeId,
     zoom,
     direction,
     rasterOptions,
@@ -212,6 +283,8 @@ export const useEditorStore = defineStore('editor', () => {
     fabricGrid,
     selectedShape,
     rasterRows,
+    shapePlans,
+    selectedShapePlan,
     instructions,
     hasSeparatedRegions,
     canUndo: computed(() => undoStack.value.length > 0),
@@ -223,6 +296,7 @@ export const useEditorStore = defineStore('editor', () => {
     addShape,
     addDefaultShape,
     addPolygon,
+    addPath,
     deleteSelected,
     undo,
     redo,
