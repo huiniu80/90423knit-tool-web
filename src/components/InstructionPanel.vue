@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
-import { generateEdgeShapingPlan, instructionToText } from '../core/knitting/planner'
-import type { EdgeShapingPlan, ShapingOperation } from '../core/knitting/planner.types'
+import { generateGarmentEdgeShapingPlans, instructionToText } from '../core/knitting/planner'
+import type { GarmentEdgeShapingPlan, ShapingOperation } from '../core/knitting/planner.types'
 import { useEditorStore } from '../stores/editor'
 
 const store = useEditorStore()
@@ -17,10 +17,15 @@ const {
 } = storeToRefs(store)
 
 const totalStitches = computed(() => selectedShapePlan.value?.totalStitches ?? 0)
-const edgeShapingPlans = computed(() => [
-  generateEdgeShapingPlan(instructions.value, 'left'),
-  generateEdgeShapingPlan(instructions.value, 'right'),
-])
+const edgeShapingPlans = computed(() => {
+  const plans = generateGarmentEdgeShapingPlans(instructions.value)
+  return hasSeparatedRegions.value
+    ? plans
+    : plans.filter((plan) => plan.edge === 'left-outer' || plan.edge === 'right-outer')
+})
+const splitInstruction = computed(() =>
+  instructions.value.find((instruction) => instruction.transition === 'split'),
+)
 
 function togglePanel(): void {
   isOpen.value = !isOpen.value
@@ -67,11 +72,11 @@ function operationLabel(operation: ShapingOperation): string {
   return operation === 'increase' ? '加针' : '减针'
 }
 
-function ruleText(rule: EdgeShapingPlan['rules'][number]): string {
+function ruleText(rule: GarmentEdgeShapingPlan['rules'][number]): string {
   return `${rule.everyRows}-${rule.stitchCount}-${rule.repeatCount}`
 }
 
-function planTotalText(plan: EdgeShapingPlan): string {
+function planTotalText(plan: GarmentEdgeShapingPlan): string {
   const changes = []
   if (plan.totalIncreasedStitches) changes.push(`加 ${plan.totalIncreasedStitches} 针`)
   if (plan.totalDecreasedStitches) changes.push(`减 ${plan.totalDecreasedStitches} 针`)
@@ -114,8 +119,12 @@ function planTotalText(plan: EdgeShapingPlan): string {
           @click="closePanel">×</button>
       </div>
 
-      <div v-if="hasSeparatedRegions" class="warning-banner">
-        当前对象包含分离编织区域；针格仍已保留，暂不自动生成分针操作。
+      <div v-if="selectedShapePlan && !selectedShapePlan.isFabric" class="warning-banner">
+        开放路径没有圈出织片面积，仅作为辅助轮廓，不计入针数。请先闭合路径再生成编织方案。
+      </div>
+      <div v-else-if="hasSeparatedRegions && splitInstruction" class="warning-banner split-banner">
+        已识别领口分片：第 {{ splitInstruction.rowNumber }} 行中间收
+        {{ Math.abs(splitInstruction.centerChange) }} 针，之后左右肩分开编织。
       </div>
 
       <div v-if="instructions.length" class="shaping-rules-panel">
@@ -124,8 +133,8 @@ function planTotalText(plan: EdgeShapingPlan): string {
           <span><code>x-y-z</code> = 每 x 行加/减 y 针，共 z 次</span>
         </div>
         <div class="edge-rule-list">
-          <div v-for="plan in edgeShapingPlans" :key="plan.side" class="edge-rule-row">
-            <span class="edge-rule-side">{{ plan.side === 'left' ? '左侧边界' : '右侧边界' }}</span>
+          <div v-for="plan in edgeShapingPlans" :key="plan.edge" class="edge-rule-row">
+            <span class="edge-rule-side">{{ plan.label }}</span>
             <div v-if="plan.supported && plan.rules.length" class="edge-rule-codes">
               <span v-for="(rule, index) in plan.rules" :key="`${rule.operation}-${index}`"
                 :class="rule.operation === 'increase' ? 'plus' : 'minus'">
@@ -133,7 +142,7 @@ function planTotalText(plan: EdgeShapingPlan): string {
               </span>
             </div>
             <span v-else-if="plan.supported" class="edge-rule-empty">不加不减</span>
-            <span v-else class="edge-rule-empty">分离区域暂不支持归纳</span>
+            <span v-else class="edge-rule-empty">三块以上织片需手动确认</span>
             <span v-if="plan.supported" class="edge-rule-total">{{ planTotalText(plan) }}</span>
           </div>
         </div>
@@ -141,7 +150,7 @@ function planTotalText(plan: EdgeShapingPlan): string {
 
       <div class="instruction-table-wrap">
         <table v-if="instructions.length" class="instruction-table">
-          <thead><tr><th>行号</th><th>物理行</th><th>针数</th><th>有效针范围</th><th>左侧</th><th>右侧</th><th>操作说明</th></tr></thead>
+          <thead><tr><th>行号</th><th>物理行</th><th>针数</th><th>有效针范围</th><th>最左外侧</th><th>最右外侧</th><th>操作说明</th></tr></thead>
           <tbody>
             <tr v-for="(instruction, index) in instructions" :key="`${direction}-${instruction.sourceRowIndex}`"
               :class="{ unsupported: !instruction.supported }">
@@ -156,7 +165,11 @@ function planTotalText(plan: EdgeShapingPlan): string {
           </tbody>
         </table>
         <div v-else-if="!shapePlans.length" class="empty-instructions">创建图形后，逐行针法会在这里实时生成。</div>
-        <div v-else class="empty-instructions">当前对象没有落在画布针格内。</div>
+        <div v-else class="empty-instructions">
+          {{ selectedShapePlan && !selectedShapePlan.isFabric
+            ? '开放路径不形成织片，请先闭合路径。'
+            : '当前对象没有落在画布针格内。' }}
+        </div>
       </div>
     </div>
   </section>

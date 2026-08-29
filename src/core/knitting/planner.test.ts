@@ -3,6 +3,7 @@ import type { RasterRow } from '../raster/raster.types'
 import {
   edgeShapingPlanToLabelLines,
   generateEdgeShapingPlan,
+  generateGarmentEdgeShapingPlan,
   generateInstructions,
   instructionToText,
 } from './planner'
@@ -47,10 +48,10 @@ describe('Knitting Planner', () => {
     const empty: RasterRow = { rowIndex: 0, yCm: 0.5, segments: [], stitchCount: 0 }
     const result = generateInstructions([empty, row(1, 2, 4), { ...empty, rowIndex: 2 }], 'bottom-up')
     expect(result).toHaveLength(1)
-    expect(instructionToText(result[0]!)).toBe('第1行：起3针')
+    expect(instructionToText(result[0]!)).toBe('第1行：下摆起3针')
   })
 
-  it('多区间行标记为 V1 不支持', () => {
+  it('从两块织片起针时生成分开编织指令', () => {
     const multiple: RasterRow = {
       rowIndex: 0,
       yCm: 0.5,
@@ -58,8 +59,9 @@ describe('Knitting Planner', () => {
       stitchCount: 6,
     }
     const result = generateInstructions([multiple], 'bottom-up')
-    expect(result[0]?.supported).toBe(false)
-    expect(instructionToText(result[0]!)).toContain('分离区域')
+    expect(result[0]?.supported).toBe(true)
+    expect(result[0]?.transition).toBe('cast-on-separated')
+    expect(instructionToText(result[0]!)).toContain('左片起3针，右片起3针')
   })
 
   it('按单侧边界生成连续的 x-y-z 减针阶段', () => {
@@ -114,7 +116,7 @@ describe('Knitting Planner', () => {
     expect(plan.totalDecreasedStitches).toBe(1)
   })
 
-  it('分离区域不生成可能误导的 x-y-z 规律', () => {
+  it('领口分片后继续归纳外侧规律', () => {
     const multiple: RasterRow = {
       rowIndex: 1,
       yCm: 1.5,
@@ -124,8 +126,38 @@ describe('Knitting Planner', () => {
     const instructions = generateInstructions([row(0, 0, 7), multiple], 'bottom-up')
     const plan = generateEdgeShapingPlan(instructions, 'left')
 
-    expect(plan.supported).toBe(false)
+    expect(plan.supported).toBe(true)
     expect(plan.rules).toEqual([])
+  })
+
+  it('自下而上识别领口中间收针和左右肩领口减针', () => {
+    const rows: RasterRow[] = [
+      row(0, 0, 9),
+      {
+        rowIndex: 1,
+        yCm: 1.5,
+        segments: [{ startStitch: 0, endStitch: 4 }, { startStitch: 6, endStitch: 9 }],
+        stitchCount: 9,
+      },
+      {
+        rowIndex: 2,
+        yCm: 2.5,
+        segments: [{ startStitch: 0, endStitch: 3 }, { startStitch: 7, endStitch: 9 }],
+        stitchCount: 7,
+      },
+    ]
+    const instructions = generateInstructions(rows, 'bottom-up')
+
+    expect(instructions[1]).toMatchObject({ transition: 'split', centerChange: -1 })
+    expect(instructionToText(instructions[1]!)).toContain('中间收1针')
+    expect(instructionToText(instructions[2]!)).toContain('左肩领口侧减1针')
+    expect(instructionToText(instructions[2]!)).toContain('右肩领口侧减1针')
+    expect(generateGarmentEdgeShapingPlan(instructions, 'left-neck').rules).toEqual([
+      { everyRows: 1, stitchCount: 1, repeatCount: 1, operation: 'decrease' },
+    ])
+    expect(generateGarmentEdgeShapingPlan(instructions, 'right-neck').rules).toEqual([
+      { everyRows: 1, stitchCount: 1, repeatCount: 1, operation: 'decrease' },
+    ])
   })
 
   it('将多阶段加减针规律格式化为画布标注文案', () => {

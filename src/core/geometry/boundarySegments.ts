@@ -8,6 +8,7 @@ export interface ShapeBoundarySegment {
   rasterShape: Shape
   anchor: Point
   spansBothSides: boolean
+  sourceShape: Shape
 }
 
 function openPathSegment(
@@ -29,17 +30,18 @@ function openPathSegment(
   }
 }
 
-function pointPairSegments(shapeId: string, points: readonly Point[]): ShapeBoundarySegment[] {
+function pointPairSegments(shape: Shape, points: readonly Point[]): ShapeBoundarySegment[] {
   if (points.length < 2) return []
   return points.map((start, segmentIndex) => {
     const end = points[(segmentIndex + 1) % points.length]!
     return {
-      key: `${shapeId}:${segmentIndex}`,
-      shapeId,
+      key: `${shape.id}:${segmentIndex}`,
+      shapeId: shape.id,
       segmentIndex,
-      rasterShape: openPathSegment(shapeId, segmentIndex, start, end),
+      rasterShape: openPathSegment(shape.id, segmentIndex, start, end),
       anchor: { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 },
       spansBothSides: false,
+      sourceShape: shape,
     }
   })
 }
@@ -62,16 +64,17 @@ export function getShapeBoundarySegments(shape: Shape): ShapeBoundarySegment[] {
         ),
         anchor: evaluatePathSegment(shape, segmentIndex, 0.5),
         spansBothSides: false,
+        sourceShape: shape,
       }
     })
   }
 
   if (shape.type === 'triangle' || shape.type === 'polygon') {
-    return pointPairSegments(shape.id, shape.points)
+    return pointPairSegments(shape, shape.points)
   }
 
   if (shape.type === 'rectangle') {
-    return pointPairSegments(shape.id, [
+    return pointPairSegments(shape, [
       { x: shape.x, y: shape.y },
       { x: shape.x + shape.widthCm, y: shape.y },
       { x: shape.x + shape.widthCm, y: shape.y + shape.heightCm },
@@ -89,6 +92,7 @@ export function getShapeBoundarySegments(shape: Shape): ShapeBoundarySegment[] {
     rasterShape: shape,
     anchor,
     spansBothSides: true,
+    sourceShape: shape,
   }]
 }
 

@@ -21,6 +21,10 @@ function clonePlain<T>(value: T): T {
 
 const cloneShapes = (value: Shape[]): Shape[] => clonePlain(value)
 
+function isFabricShape(shape: Shape): boolean {
+  return shape.type !== 'path' || shape.closed
+}
+
 function createId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `shape-${Date.now()}-${Math.random()}`
 }
@@ -87,7 +91,12 @@ export const useEditorStore = defineStore('editor', () => {
     () => shapes.value.find((shape) => shape.id === selectedShapeId.value) ?? null,
   )
   const rasterRows = computed(() =>
-    rasterizeShapes(shapes.value, gauge.value, fabric.value, rasterOptions.value),
+    rasterizeShapes(
+      shapes.value.filter(isFabricShape),
+      gauge.value,
+      fabric.value,
+      rasterOptions.value,
+    ),
   )
   function directionForShape(shapeId: string): KnitDirection {
     return shapeDirections.value[shapeId] ?? 'bottom-up'
@@ -102,7 +111,10 @@ export const useEditorStore = defineStore('editor', () => {
     },
   })
   const shapePlans = computed<ShapePlan[]>(() => shapes.value.map((shape) => {
-    const rows = rasterize(shape, gauge.value, fabric.value, rasterOptions.value)
+    const isFabric = isFabricShape(shape)
+    const rows = isFabric
+      ? rasterize(shape, gauge.value, fabric.value, rasterOptions.value)
+      : rasterizeShapes([], gauge.value, fabric.value, rasterOptions.value)
     const shapeDirection = directionForShape(shape.id)
     const planInstructions = generateInstructions(rows, shapeDirection)
     return {
@@ -114,6 +126,7 @@ export const useEditorStore = defineStore('editor', () => {
       instructions: planInstructions,
       totalStitches: planInstructions.reduce((sum, item) => sum + item.stitchCount, 0),
       hasSeparatedRegions: rows.some((row) => row.segments.length > 1),
+      isFabric,
     }
   }))
   const selectedShapePlan = computed(() =>

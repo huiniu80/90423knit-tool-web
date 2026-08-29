@@ -26,6 +26,7 @@ export interface ShapePlan {
   instructions: KnittingInstruction[]
   totalStitches: number
   hasSeparatedRegions: boolean
+  isFabric: boolean
 }
 
 export interface KnittingProject {

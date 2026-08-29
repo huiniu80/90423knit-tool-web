@@ -99,7 +99,7 @@ function clonePlain<T>(value: T): T {
 const fabricWidthPx = computed(() => fabric.value.widthCm * zoom.value)
 const fabricHeightPx = computed(() => fabric.value.heightCm * zoom.value)
 const showRasterFill = computed(() => viewMode.value !== 'outline')
-const showOutlineFill = computed(() => viewMode.value === 'overlay')
+const showOutlineFill = computed(() => viewMode.value === 'outline' || viewMode.value === 'overlay')
 const stageCursor = computed(() => {
   if (annotationHovered.value) return 'pointer'
   if (interaction.value?.kind === 'pan') return 'grabbing'
@@ -346,7 +346,7 @@ function shapeConfig(shape: Shape): Record<string, unknown> {
     name: `shape:${shape.id}`,
     stroke: '#b24631',
     strokeWidth: selectedShapeId.value === shape.id ? 2.2 : 1.5,
-    fill: showOutlineFill.value ? 'rgba(194, 88, 61, 0.13)' : 'transparent',
+    fill: showOutlineFill.value ? 'rgba(40, 125, 114, 0.16)' : 'transparent',
     fillEnabled: showOutlineFill.value,
     hitStrokeWidth: 12,
   }

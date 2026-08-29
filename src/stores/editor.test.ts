@@ -39,7 +39,8 @@ describe('Editor Store', () => {
     expect(store.shapePlans).toHaveLength(store.shapes.length)
     expect(store.selectedPlanShapeId).toBe(pathId)
     expect(store.selectedShapePlan?.shapeType).toBe('path')
-    expect(store.selectedShapePlan?.instructions.length).toBeGreaterThan(0)
+    expect(store.selectedShapePlan?.instructions).toHaveLength(0)
+    expect(store.selectedShapePlan?.isFabric).toBe(false)
 
     const aggregateBefore = JSON.stringify(store.rasterRows)
     store.selectedPlanShapeId = starterId

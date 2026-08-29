@@ -11,6 +11,25 @@ export interface KnittingInstruction {
   rightChange: number
   isCastOn: boolean
   supported: boolean
+  transition: InstructionTransition
+  centerChange: number
+  panelChanges: PanelChange[]
+}
+
+export type InstructionTransition =
+  | 'cast-on'
+  | 'cast-on-separated'
+  | 'continue'
+  | 'split'
+  | 'join'
+  | 'unsupported'
+
+export type PanelRole = 'body' | 'left-shoulder' | 'right-shoulder'
+
+export interface PanelChange {
+  panel: PanelRole
+  leftChange: number
+  rightChange: number
 }
 
 export type ShapingSide = 'left' | 'right'
@@ -30,4 +49,16 @@ export interface EdgeShapingPlan {
   totalIncreasedStitches: number
   totalDecreasedStitches: number
   supported: boolean
+}
+
+export type GarmentEdgeRole =
+  | 'left-outer'
+  | 'left-neck'
+  | 'right-neck'
+  | 'right-outer'
+
+export interface GarmentEdgeShapingPlan
+  extends Omit<EdgeShapingPlan, 'side'> {
+  edge: GarmentEdgeRole
+  label: string
 }
