@@ -78,7 +78,7 @@ const draftPathNodes = ref<PathNode[]>([])
 const pathPointer = ref<Point | null>(null)
 const selectedPointIndex = ref<number | null>(null)
 const selectedPathNodeIndex = ref<number | null>(null)
-const selectedAnnotationShapeId = ref<string | null>(null)
+const selectedGridAnnotationShapeId = ref<string | null>(null)
 const annotationHovered = ref(false)
 let resizeObserver: ResizeObserver | null = null
 
@@ -223,9 +223,9 @@ const shapingAnnotations = computed<OutlineShapingAnnotation[]>(() => {
   const planByShapeId = new Map(shapePlans.value.map((plan) => [plan.shapeId, plan]))
   const drafts: AnnotationDraft[] = []
   const viewportRight = stageSize.value.width - annotationViewportMargin
-  const annotatedShapes = shapes.value.filter(
-    (shape) => shape.id === selectedAnnotationShapeId.value,
-  )
+  const annotatedShapes = viewMode.value === 'grid'
+    ? shapes.value.filter((shape) => shape.id === selectedGridAnnotationShapeId.value)
+    : shapes.value
 
   for (const shape of annotatedShapes) {
     const shapePlan = planByShapeId.get(shape.id)
@@ -514,11 +514,8 @@ function onMouseDown(event: KonvaEventObject<MouseEvent>): void {
     return
   }
 
-  if (
-    (viewMode.value === 'outline' || viewMode.value === 'grid')
-    && name.startsWith('shape:')
-  ) {
-    selectedAnnotationShapeId.value = name.slice('shape:'.length)
+  if (viewMode.value === 'grid' && name.startsWith('shape:')) {
+    selectedGridAnnotationShapeId.value = name.slice('shape:'.length)
   }
 
   const isPrimaryBackgroundDrag =
@@ -526,9 +523,7 @@ function onMouseDown(event: KonvaEventObject<MouseEvent>): void {
   if (activeTool.value === 'pan' || event.evt.button === 1 || isPrimaryBackgroundDrag) {
     if (isPrimaryBackgroundDrag) {
       selectedShapeId.value = null
-      if (viewMode.value === 'outline' || viewMode.value === 'grid') {
-        selectedAnnotationShapeId.value = null
-      }
+      if (viewMode.value === 'grid') selectedGridAnnotationShapeId.value = null
       selectedPointIndex.value = null
       selectedPathNodeIndex.value = null
     }
@@ -598,9 +593,7 @@ function onMouseDown(event: KonvaEventObject<MouseEvent>): void {
     return
   }
   selectedShapeId.value = null
-  if (viewMode.value === 'outline' || viewMode.value === 'grid') {
-    selectedAnnotationShapeId.value = null
-  }
+  if (viewMode.value === 'grid') selectedGridAnnotationShapeId.value = null
   selectedPointIndex.value = null
   selectedPathNodeIndex.value = null
 }
@@ -921,15 +914,14 @@ watch(selectedShapeId, () => {
   selectedPathNodeIndex.value = null
 })
 watch(viewMode, (mode, previousMode) => {
-  const isShapingView = mode === 'outline' || mode === 'grid'
-  if (isShapingView && mode !== previousMode) selectedAnnotationShapeId.value = null
+  if (mode === 'grid' && previousMode !== 'grid') selectedGridAnnotationShapeId.value = null
 })
 watch(() => shapes.value.map((shape) => shape.id), (shapeIds) => {
   if (
-    selectedAnnotationShapeId.value
-    && !shapeIds.includes(selectedAnnotationShapeId.value)
+    selectedGridAnnotationShapeId.value
+    && !shapeIds.includes(selectedGridAnnotationShapeId.value)
   ) {
-    selectedAnnotationShapeId.value = null
+    selectedGridAnnotationShapeId.value = null
   }
 })
 
@@ -1076,7 +1068,7 @@ defineExpose({ fitCanvas })
       <b>{{ fabricGrid.columnCount }} 针 × {{ fabricGrid.rowCount }} 行</b>
       <span>原点在左下角 · 单位 cm</span>
     </div>
-    <div v-if="(viewMode === 'outline' || viewMode === 'grid') && !selectedAnnotationShapeId"
+    <div v-if="viewMode === 'grid' && !selectedGridAnnotationShapeId"
       class="canvas-hud canvas-hud--selection-tip">
       <b>点击红色轮廓</b>
       <span>查看该对象的加减针规律与编织方向</span>
