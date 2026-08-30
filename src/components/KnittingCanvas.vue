@@ -41,17 +41,20 @@ interface AnnotationDraft {
   shapeId: string
   shapeName: string
   segmentIndex: number
+  side: 'left' | 'right'
   anchorX: number
   anchorY: number
+  x: number
+  preferredY: number
+  width: number
+  height: number
   lines: string[]
   markers: Array<{ label: string; x: number; y: number }>
 }
 
-interface AnnotationGroup {
-  shapeId: string
-  shapeName: string
-  direction: (typeof shapePlans.value)[number]['direction']
-  annotations: AnnotationDraft[]
+interface ShapingAnnotation extends Omit<AnnotationDraft, 'preferredY'> {
+  y: number
+  connectorPoints: number[]
 }
 
 const store = useEditorStore()
@@ -84,6 +87,13 @@ const annotationHovered = ref(false)
 let resizeObserver: ResizeObserver | null = null
 
 const canvasBoundaryPadding = 24
+const annotationWidth = 224
+const annotationLineHeight = 15
+const annotationPaddingX = 10
+const annotationPaddingY = 8
+const annotationViewportMargin = 14
+const annotationCollisionGap = 8
+const annotationFabricGap = 38
 
 function clonePlain<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -126,6 +136,70 @@ const rasterBands = computed(() =>
   ),
 )
 
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(Math.max(value, minimum), Math.max(minimum, maximum))
+}
+
+function annotationCardTarget(name: string): { shapeId: string; segmentIndex: number } | null {
+  const prefix = 'outline-card:'
+  if (!name.startsWith(prefix)) return null
+  const [shapeId, segmentIndexText] = name.slice(prefix.length).split('|')
+  const segmentIndex = Number(segmentIndexText)
+  return shapeId && Number.isInteger(segmentIndex) ? { shapeId, segmentIndex } : null
+}
+
+function layoutAnnotationSide(
+  drafts: AnnotationDraft[],
+): Array<AnnotationDraft & { y: number }> {
+  const top = annotationViewportMargin
+  const bottom = stageSize.value.height - annotationViewportMargin
+  const placed = [...drafts]
+    .sort((left, right) => left.preferredY - right.preferredY)
+    .map((draft) => ({
+      ...draft,
+      y: clamp(draft.preferredY, top, bottom - draft.height),
+    }))
+
+  placed.forEach((current, index) => {
+    const previous = placed[index - 1]
+    if (previous && current.y < previous.y + previous.height + annotationCollisionGap) {
+      current.y = previous.y + previous.height + annotationCollisionGap
+    }
+  })
+
+  const last = placed.at(-1)
+  const upwardShift = last ? Math.max(0, last.y + last.height - bottom) : 0
+  if (upwardShift) placed.forEach((item) => (item.y -= upwardShift))
+  const first = placed[0]
+  const downwardShift = first ? Math.max(0, top - first.y) : 0
+  if (downwardShift) placed.forEach((item) => (item.y += downwardShift))
+
+  return placed
+}
+
+function connectorPoints(annotation: AnnotationDraft & { y: number }): number[] {
+  const isLeft = annotation.side === 'left'
+  const fabricEdgeX = isLeft
+    ? pan.value.x - annotationFabricGap / 2
+    : pan.value.x + fabricWidthPx.value + annotationFabricGap / 2
+  const cardEdgeX = isLeft ? annotation.x + annotation.width : annotation.x
+  const endY = clamp(
+    annotation.anchorY,
+    annotation.y + annotationPaddingY + annotationLineHeight / 2,
+    annotation.y + annotation.height - annotationPaddingY - annotationLineHeight / 2,
+  )
+  return [
+    annotation.anchorX,
+    annotation.anchorY,
+    fabricEdgeX,
+    annotation.anchorY,
+    fabricEdgeX,
+    endY,
+    cardEdgeX,
+    endY,
+  ]
+}
+
 function directionLabel(direction: (typeof shapePlans.value)[number]['direction']): string {
   return direction === 'bottom-up' ? '↑ 下→上' : '↓ 上→下'
 }
@@ -139,7 +213,7 @@ function toggleAnnotationDirection(shapeId: string): void {
   )
 }
 
-const shapingAnnotations = computed<AnnotationDraft[]>(() => {
+const shapingAnnotations = computed<ShapingAnnotation[]>(() => {
   if (viewMode.value !== 'outline' && viewMode.value !== 'grid') return []
   const planByShapeId = new Map(shapePlans.value.map((plan) => [plan.shapeId, plan]))
   const drafts: AnnotationDraft[] = []
@@ -174,17 +248,33 @@ const shapingAnnotations = computed<AnnotationDraft[]>(() => {
     const ruleLines = sidePrefix
       ? description.lines.map((line) => `${sidePrefix} · ${line}`)
       : description.lines
-    const lines = [`第 ${segment.segmentIndex + 1} 段 · ${directionLabel(shapePlan.direction)}`, ...ruleLines]
+    const shapeName = segment.sourceShape.name ?? '未命名织片'
+    const lines = [
+      `${shapeName} · 第 ${segment.segmentIndex + 1} 段 · ${directionLabel(shapePlan.direction)}`,
+      ...ruleLines,
+    ]
+    const height = annotationPaddingY * 2 + lines.length * annotationLineHeight
+    const isCentered = Math.abs(segment.anchor.x - outlineCenterX) < 0.001
+    const side = segment.anchor.x < outlineCenterX || (isCentered && segment.segmentIndex % 2 === 0)
+      ? 'left'
+      : 'right'
     const anchorX = pan.value.x + segment.anchor.x * zoom.value
     const anchorY = pan.value.y + (fabric.value.heightCm - segment.anchor.y) * zoom.value
 
     drafts.push({
       key: segment.key,
       shapeId: segment.shapeId,
-      shapeName: segment.sourceShape.name ?? '未命名织片',
+      shapeName,
       segmentIndex: segment.segmentIndex,
+      side,
       anchorX,
       anchorY,
+      x: side === 'left'
+        ? annotationViewportMargin
+        : stageSize.value.width - annotationViewportMargin - annotationWidth,
+      preferredY: anchorY - height / 2,
+      width: annotationWidth,
+      height,
       lines,
       markers: description.markers.map((marker) => ({
         label: marker.label,
@@ -194,31 +284,29 @@ const shapingAnnotations = computed<AnnotationDraft[]>(() => {
     })
   }
 
-  return drafts
-})
-
-const annotationGroups = computed<AnnotationGroup[]>(() => {
-  const annotationsByShape = new Map<string, AnnotationDraft[]>()
-  shapingAnnotations.value.forEach((annotation) => {
-    const current = annotationsByShape.get(annotation.shapeId) ?? []
-    current.push(annotation)
-    annotationsByShape.set(annotation.shapeId, current)
-  })
-  return shapePlans.value.flatMap((plan) => {
-    const annotations = annotationsByShape.get(plan.shapeId)
-    return annotations?.length
-      ? [{
-          shapeId: plan.shapeId,
-          shapeName: plan.shapeName ?? '未命名织片',
-          direction: plan.direction,
-          annotations,
-        }]
-      : []
-  })
+  const placed = [
+    ...layoutAnnotationSide(drafts.filter((draft) => draft.side === 'left')),
+    ...layoutAnnotationSide(drafts.filter((draft) => draft.side === 'right')),
+  ]
+  return placed.map((annotation) => ({
+    ...annotation,
+    connectorPoints: connectorPoints(annotation),
+  }))
 })
 
 function annotationIsHighlighted(key: string): boolean {
   return highlightedAnnotationKey.value === key
+}
+
+function annotationLineColor(line: string, lineIndex: number): string {
+  if (lineIndex === 0) return '#287d72'
+  if (line.includes('加')) return '#237351'
+  if (line.includes('减')) return '#b24631'
+  return '#666b67'
+}
+
+function annotationLineIsBold(line: string, lineIndex: number): boolean {
+  return lineIndex === 0 || line.includes('加') || line.includes('减')
 }
 
 function toCanvasPoint(point: Point): Point {
@@ -414,15 +502,24 @@ function targetName(event: KonvaEventObject<MouseEvent>): string {
 }
 
 function clampPan(nextPan: Point): Point {
-  const clampAxis = (offset: number, contentSize: number, viewportSize: number): number => {
-    const start = canvasBoundaryPadding
-    const end = viewportSize - contentSize - canvasBoundaryPadding
+  const clampAxis = (
+    offset: number,
+    contentSize: number,
+    viewportSize: number,
+    padding: number,
+  ): number => {
+    const start = padding
+    const end = viewportSize - contentSize - padding
     return Math.min(Math.max(offset, Math.min(start, end)), Math.max(start, end))
   }
 
+  const horizontalPadding = viewMode.value === 'outline' || viewMode.value === 'grid'
+    ? annotationViewportMargin + annotationWidth + annotationFabricGap
+    : canvasBoundaryPadding
+
   return {
-    x: clampAxis(nextPan.x, fabricWidthPx.value, stageSize.value.width),
-    y: clampAxis(nextPan.y, fabricHeightPx.value, stageSize.value.height),
+    x: clampAxis(nextPan.x, fabricWidthPx.value, stageSize.value.width, horizontalPadding),
+    y: clampAxis(nextPan.y, fabricHeightPx.value, stageSize.value.height, canvasBoundaryPadding),
   }
 }
 
@@ -449,11 +546,11 @@ function onMouseDown(event: KonvaEventObject<MouseEvent>): void {
   if (!pointer) return
 
   const name = targetName(event)
-  if (name.startsWith('outline-direction:')) {
-    toggleAnnotationDirection(name.slice('outline-direction:'.length))
+  const annotationTarget = annotationCardTarget(name)
+  if (annotationTarget) {
+    toggleAnnotationDirection(annotationTarget.shapeId)
     return
   }
-
   if (viewMode.value === 'grid' && name.startsWith('shape:')) {
     const shapeId = name.slice('shape:'.length)
     const shape = shapes.value.find((item) => item.id === shapeId)
@@ -549,7 +646,11 @@ function onMouseMove(event: KonvaEventObject<MouseEvent>): void {
   const pointer = pointerFromEvent(event)
   const current = interaction.value
   if (!pointer) return
-  annotationHovered.value = targetName(event).startsWith('outline-direction:')
+  const annotationTarget = annotationCardTarget(targetName(event))
+  annotationHovered.value = Boolean(annotationTarget)
+  highlightedAnnotationKey.value = annotationTarget
+    ? `${annotationTarget.shapeId}:${annotationTarget.segmentIndex}`
+    : null
   pathPointer.value = activeTool.value === 'path' ? worldFromScreen(pointer, true) : null
   if (!current) return
 
@@ -621,11 +722,12 @@ function endInteraction(): void {
 function onMouseLeave(): void {
   pathPointer.value = null
   annotationHovered.value = false
+  highlightedAnnotationKey.value = null
   endInteraction()
 }
 
 function onStageClick(event: KonvaEventObject<MouseEvent>): void {
-  if (targetName(event).startsWith('outline-direction:')) return
+  if (annotationCardTarget(targetName(event))) return
   if (activeTool.value !== 'polygon' && activeTool.value !== 'path') return
   const pointer = pointerFromEvent(event)
   if (!pointer) return
@@ -812,14 +914,17 @@ function onWindowKeyDown(event: KeyboardEvent): void {
 }
 
 function fitCanvas(): void {
-  const padding = 72
+  const verticalPadding = 72
+  const horizontalPadding = viewMode.value === 'outline' || viewMode.value === 'grid'
+    ? annotationViewportMargin + annotationWidth + annotationFabricGap
+    : verticalPadding
   const nextZoom = Math.min(
     48,
     Math.max(
       5,
       Math.min(
-        (stageSize.value.width - padding * 2) / fabric.value.widthCm,
-        (stageSize.value.height - padding * 2) / fabric.value.heightCm,
+        (stageSize.value.width - horizontalPadding * 2) / fabric.value.widthCm,
+        (stageSize.value.height - verticalPadding * 2) / fabric.value.heightCm,
       ),
     ),
   )
@@ -862,6 +967,7 @@ watch(selectedShapeId, () => {
 })
 watch(viewMode, (mode, previousMode) => {
   if (mode === 'grid' && previousMode !== 'grid') selectedGridAnnotationSegment.value = null
+  nextTick(fitCanvas)
 })
 watch(() => shapes.value.map((shape) => shape.id), (shapeIds) => {
   if (
@@ -876,7 +982,6 @@ defineExpose({ fitCanvas })
 </script>
 
 <template>
-  <div :class="['knitting-canvas-shell', { 'has-shaping-rail': viewMode === 'outline' || viewMode === 'grid' }]">
   <div ref="host" class="knitting-canvas" tabindex="0" :style="{ cursor: stageCursor }">
     <v-stage :config="{ width: stageSize.width, height: stageSize.height }"
       @mousedown="onMouseDown" @mousemove="onMouseMove" @mouseup="endInteraction"
@@ -980,6 +1085,14 @@ defineExpose({ fitCanvas })
         </v-group>
 
         <template v-if="viewMode === 'outline' || viewMode === 'grid'">
+          <v-line v-for="annotation in shapingAnnotations" :key="`${annotation.key}-connector`"
+            :config="{
+              points: annotation.connectorPoints,
+              stroke: annotationIsHighlighted(annotation.key) ? '#b24631' : '#8b8175',
+              strokeWidth: annotationIsHighlighted(annotation.key) ? 1.6 : 1,
+              opacity: annotationIsHighlighted(annotation.key) ? 0.9 : 0.62,
+              dash: [5, 4], lineCap: 'round', lineJoin: 'round', listening: false,
+            }" />
           <template v-for="annotation in shapingAnnotations" :key="`${annotation.key}-markers`">
             <v-group v-for="(marker, markerIndex) in annotation.markers"
               :key="`${annotation.key}-marker-${markerIndex}`"
@@ -1001,18 +1114,51 @@ defineExpose({ fitCanvas })
           <v-group v-for="annotation in shapingAnnotations" :key="annotation.key"
             :config="{ x: annotation.anchorX, y: annotation.anchorY, listening: false }">
             <v-rect :config="{
-              x: -18, y: -11, width: 36, height: 22,
+              x: -11, y: -11, width: 22, height: 22,
               fill: annotationIsHighlighted(annotation.key) ? '#b24631' : '#263d36',
               stroke: '#fffdf8', strokeWidth: 2, cornerRadius: 11,
               shadowColor: '#263d36', shadowBlur: 5, shadowOpacity: 0.2,
               shadowOffsetY: 2, listening: false,
             }" />
             <v-text :config="{
-              x: -16, y: -7, width: 32, height: 14,
-              text: `${annotation.segmentIndex + 1}段`, align: 'center', verticalAlign: 'middle',
+              x: -9, y: -7, width: 18, height: 14,
+              text: `${annotation.segmentIndex + 1}`, align: 'center', verticalAlign: 'middle',
               fill: '#fffdf8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
               fontSize: 9, fontStyle: 'bold', listening: false,
             }" />
+          </v-group>
+
+          <v-group v-for="annotation in shapingAnnotations" :key="`${annotation.key}-card`"
+            :config="{ x: annotation.x, y: annotation.y, listening: activeTool !== 'path' }">
+            <v-rect :config="{
+              name: `outline-card:${annotation.shapeId}|${annotation.segmentIndex}`,
+              width: annotation.width, height: annotation.height,
+              fill: annotationIsHighlighted(annotation.key)
+                ? 'rgba(255, 250, 244, 0.99)'
+                : 'rgba(255, 253, 248, 0.96)',
+              stroke: annotationIsHighlighted(annotation.key) ? '#c78b7e' : '#d8c9bd',
+              strokeWidth: annotationIsHighlighted(annotation.key) ? 1.4 : 1,
+              cornerRadius: 7, shadowColor: '#4a3f35', shadowBlur: 8,
+              shadowOpacity: 0.12, shadowOffsetY: 2, listening: activeTool !== 'path',
+            }" />
+            <v-rect :config="{
+              x: 0, y: 8, width: 3, height: annotation.height - 16,
+              fill: annotationIsHighlighted(annotation.key) ? '#b24631' : '#287d72',
+              cornerRadius: [0, 2, 2, 0], listening: false,
+            }" />
+            <v-text v-for="(line, lineIndex) in annotation.lines"
+              :key="`${annotation.key}-line-${lineIndex}`" :config="{
+                x: annotationPaddingX,
+                y: annotationPaddingY + lineIndex * annotationLineHeight,
+                width: annotation.width - annotationPaddingX * 2,
+                height: annotationLineHeight,
+                text: line,
+                fill: annotationLineColor(line, lineIndex),
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                fontSize: lineIndex === 0 ? 9.5 : 10,
+                fontStyle: annotationLineIsBold(line, lineIndex) ? 'bold' : 'normal',
+                verticalAlign: 'middle', listening: false,
+              }" />
           </v-group>
         </template>
       </v-layer>
@@ -1039,57 +1185,5 @@ defineExpose({ fitCanvas })
         完成开放路径 <kbd>Enter</kbd>
       </button>
     </div>
-  </div>
-
-  <aside v-if="viewMode === 'outline' || viewMode === 'grid'" class="shaping-rail" aria-label="分段针法说明">
-    <div class="shaping-rail__header">
-      <div>
-        <span class="eyebrow">SHAPING GUIDE</span>
-        <h2>分段针法</h2>
-      </div>
-      <span class="shaping-rail__count">{{ shapingAnnotations.length }} 段</span>
-    </div>
-    <p class="shaping-rail__intro">
-      画布上的“段”标签对应这里的卡片；悬停卡片可高亮该段的执行节点。
-    </p>
-
-    <div v-if="annotationGroups.length" class="shaping-rail__scroll">
-      <section v-for="group in annotationGroups" :key="group.shapeId" class="shaping-group">
-        <div class="shaping-group__header">
-          <div>
-            <span>织片</span>
-            <strong>{{ group.shapeName }}</strong>
-          </div>
-          <button type="button" :title="'切换编织方向'" @click="toggleAnnotationDirection(group.shapeId)">
-            {{ directionLabel(group.direction) }}
-            <small>切换</small>
-          </button>
-        </div>
-
-        <article v-for="annotation in group.annotations" :key="annotation.key"
-          :class="['shaping-card', { active: annotationIsHighlighted(annotation.key) }]"
-          @mouseenter="highlightedAnnotationKey = annotation.key"
-          @mouseleave="highlightedAnnotationKey = null">
-          <header>
-            <span>{{ annotation.segmentIndex + 1 }} 段</span>
-            <b>{{ annotation.lines[1] ?? '边界针法' }}</b>
-          </header>
-          <ol v-if="annotation.lines.length > 2" class="shaping-card__rules">
-            <li v-for="(line, lineIndex) in annotation.lines.slice(2)"
-              :key="`${annotation.key}-rule-${lineIndex}`"
-              :class="{ increase: line.includes('加'), decrease: line.includes('减') }">
-              {{ line }}
-            </li>
-          </ol>
-        </article>
-      </section>
-    </div>
-
-    <div v-else class="shaping-rail__empty">
-      <span>{{ viewMode === 'grid' ? '⌖' : '◇' }}</span>
-      <strong>{{ viewMode === 'grid' ? '请在画布上选择一段边界' : '暂无可分析的边界' }}</strong>
-      <p>{{ viewMode === 'grid' ? '点击红色轮廓，右侧只显示该段针法。' : '添加闭合织片后会在这里生成分段说明。' }}</p>
-    </div>
-  </aside>
   </div>
 </template>
