@@ -2,15 +2,13 @@ import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { calculateFabricGrid, calculateGauge } from '../core/gauge/gauge'
 import type { GaugeInput, FabricCanvas } from '../core/gauge/gauge.types'
-import type { PathNode, PathShape, Point, Shape, ShapeType } from '../core/geometry/shape.types'
+import type { PathNode, Point, Shape, ShapeType } from '../core/geometry/shape.types'
 import { generateInstructions } from '../core/knitting/planner'
 import type { KnitDirection } from '../core/knitting/planner.types'
 import { rasterize, rasterizeShapes } from '../core/raster/rasterizer'
 import type { RasterOptions } from '../core/raster/raster.types'
 import type {
   EditorTool,
-  ImportableKnittingProject,
-  KnittingProject,
   ShapePlan,
   ViewMode,
 } from './editor.types'
@@ -27,23 +25,6 @@ function isFabricShape(shape: Shape): boolean {
 
 function createId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `shape-${Date.now()}-${Math.random()}`
-}
-
-function isFinitePoint(value: unknown): value is Point {
-  if (!value || typeof value !== 'object') return false
-  const point = value as Point
-  return Number.isFinite(point.x) && Number.isFinite(point.y)
-}
-
-function isValidPath(shape: PathShape): boolean {
-  return Array.isArray(shape.nodes) &&
-    shape.nodes.length >= 2 &&
-    (!shape.closed || shape.nodes.length >= 3) &&
-    shape.nodes.every((node) =>
-      isFinitePoint(node.anchor) &&
-      (node.inControl === undefined || isFinitePoint(node.inControl)) &&
-      (node.outControl === undefined || isFinitePoint(node.outControl)),
-    )
 }
 
 function starterShapes(): Shape[] {
@@ -270,57 +251,6 @@ export const useEditorStore = defineStore('editor', () => {
     ensureSelectedPlan()
   }
 
-  function exportProject(): KnittingProject {
-    const exportedDirections = Object.fromEntries(
-      shapes.value.map((shape) => [shape.id, directionForShape(shape.id)]),
-    )
-    return {
-      version: 3,
-      gauge: clonePlain(gaugeInput.value),
-      canvas: clonePlain(fabric.value),
-      shapeDirections: exportedDirections,
-      rasterOptions: clonePlain(rasterOptions.value),
-      shapes: cloneShapes(shapes.value),
-    }
-  }
-
-  function importProject(project: ImportableKnittingProject): void {
-    if (
-      (project.version !== 1 && project.version !== 2 && project.version !== 3)
-      || !Array.isArray(project.shapes)
-    ) {
-      throw new Error('不支持的项目文件版本')
-    }
-    if (project.version === 1 && project.shapes.some((shape) => shape.type === 'path')) {
-      throw new Error('version 1 项目不能包含路径图形')
-    }
-    if (project.shapes.some((shape) => shape.type === 'path' && !isValidPath(shape))) {
-      throw new Error('路径数据无效')
-    }
-    calculateGauge(project.gauge)
-    calculateFabricGrid(project.canvas, calculateGauge(project.gauge))
-    const importedDirections = project.version === 3
-      ? project.shapeDirections
-      : Object.fromEntries(project.shapes.map((shape) => [shape.id, project.direction]))
-    if (
-      !importedDirections
-      || typeof importedDirections !== 'object'
-      || Object.values(importedDirections).some(
-        (value) => value !== 'bottom-up' && value !== 'top-down',
-      )
-    ) {
-      throw new Error('编织方向数据无效')
-    }
-    pushUndo(shapes.value)
-    gaugeInput.value = clonePlain(project.gauge)
-    fabric.value = clonePlain(project.canvas)
-    shapeDirections.value = clonePlain(importedDirections)
-    rasterOptions.value = clonePlain(project.rasterOptions)
-    shapes.value = cloneShapes(project.shapes)
-    selectedShapeId.value = shapes.value[0]?.id ?? null
-    selectedPlanShapeId.value = shapes.value[0]?.id ?? null
-  }
-
   return {
     gaugeInput,
     fabric,
@@ -355,7 +285,5 @@ export const useEditorStore = defineStore('editor', () => {
     deleteSelected,
     undo,
     redo,
-    exportProject,
-    importProject,
   }
 })
