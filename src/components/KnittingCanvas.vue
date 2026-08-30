@@ -84,6 +84,7 @@ const selectedPathNodeIndex = ref<number | null>(null)
 const selectedGridAnnotationSegment = ref<{ shapeId: string; segmentIndex: number } | null>(null)
 const highlightedAnnotationKey = ref<string | null>(null)
 const annotationHovered = ref(false)
+const canvasBackgroundHovered = ref(false)
 let resizeObserver: ResizeObserver | null = null
 
 const canvasBoundaryPadding = 24
@@ -106,7 +107,11 @@ const showOutlineFill = computed(() => viewMode.value === 'outline' || viewMode.
 const stageCursor = computed(() => {
   if (annotationHovered.value) return 'pointer'
   if (interaction.value?.kind === 'pan') return 'grabbing'
-  if (activeTool.value === 'pan') return 'grab'
+  if (interaction.value?.kind === 'move') return 'grabbing'
+  if (canvasBackgroundHovered.value && (activeTool.value === 'select' || activeTool.value === 'pan')) {
+    return 'grab'
+  }
+  if (activeTool.value === 'pan') return 'move'
   if (activeTool.value === 'polygon' || activeTool.value === 'path') return 'crosshair'
   return interaction.value ? 'grabbing' : 'default'
 })
@@ -501,6 +506,10 @@ function targetName(event: KonvaEventObject<MouseEvent>): string {
   return event.target.name?.() ?? ''
 }
 
+function isCanvasBackground(name: string): boolean {
+  return name === '' || name === 'fabric'
+}
+
 function clampPan(nextPan: Point): Point {
   const clampAxis = (
     offset: number,
@@ -546,11 +555,26 @@ function onMouseDown(event: KonvaEventObject<MouseEvent>): void {
   if (!pointer) return
 
   const name = targetName(event)
+  const isPrimaryCanvasDrag = event.evt.button === 0
+    && isCanvasBackground(name)
+    && (activeTool.value === 'select' || activeTool.value === 'pan')
+  if (event.evt.button === 1 || isPrimaryCanvasDrag) {
+    if (isPrimaryCanvasDrag && activeTool.value === 'select') {
+      selectedShapeId.value = null
+      if (viewMode.value === 'grid') selectedGridAnnotationSegment.value = null
+      selectedPointIndex.value = null
+      selectedPathNodeIndex.value = null
+    }
+    interaction.value = { kind: 'pan', start: pointer, origin: { ...pan.value } }
+    return
+  }
   const annotationTarget = annotationCardTarget(name)
   if (annotationTarget) {
     toggleAnnotationDirection(annotationTarget.shapeId)
     return
   }
+  if (activeTool.value === 'polygon' || activeTool.value === 'path') return
+
   if (viewMode.value === 'grid' && name.startsWith('shape:')) {
     const shapeId = name.slice('shape:'.length)
     const shape = shapes.value.find((item) => item.id === shapeId)
@@ -562,19 +586,18 @@ function onMouseDown(event: KonvaEventObject<MouseEvent>): void {
       : null
   }
 
-  const isPrimaryBackgroundDrag =
-    activeTool.value === 'select' && event.evt.button === 0 && (name === '' || name === 'fabric')
-  if (activeTool.value === 'pan' || event.evt.button === 1 || isPrimaryBackgroundDrag) {
-    if (isPrimaryBackgroundDrag) {
-      selectedShapeId.value = null
-      if (viewMode.value === 'grid') selectedGridAnnotationSegment.value = null
-      selectedPointIndex.value = null
-      selectedPathNodeIndex.value = null
-    }
-    interaction.value = { kind: 'pan', start: pointer, origin: { ...pan.value } }
+  if (activeTool.value === 'pan') {
+    if (!name.startsWith('shape:')) return
+    const id = name.slice('shape:'.length)
+    const shape = shapes.value.find((item) => item.id === id)
+    if (!shape) return
+    selectedShapeId.value = id
+    selectedPointIndex.value = null
+    selectedPathNodeIndex.value = null
+    beginMove(shape, pointer)
     return
   }
-  if (activeTool.value === 'polygon' || activeTool.value === 'path') return
+
   if (activeTool.value !== 'select') return
 
   if (name.startsWith('path-anchor:') && selectedShape.value?.type === 'path') {
@@ -632,8 +655,6 @@ function onMouseDown(event: KonvaEventObject<MouseEvent>): void {
     selectedShapeId.value = id
     selectedPointIndex.value = null
     selectedPathNodeIndex.value = null
-    const shape = shapes.value.find((item) => item.id === id)
-    if (shape) beginMove(shape, pointer)
     return
   }
   selectedShapeId.value = null
@@ -646,7 +667,9 @@ function onMouseMove(event: KonvaEventObject<MouseEvent>): void {
   const pointer = pointerFromEvent(event)
   const current = interaction.value
   if (!pointer) return
-  const annotationTarget = annotationCardTarget(targetName(event))
+  const name = targetName(event)
+  const annotationTarget = annotationCardTarget(name)
+  canvasBackgroundHovered.value = isCanvasBackground(name)
   annotationHovered.value = Boolean(annotationTarget)
   highlightedAnnotationKey.value = annotationTarget
     ? `${annotationTarget.shapeId}:${annotationTarget.segmentIndex}`
@@ -722,6 +745,7 @@ function endInteraction(): void {
 function onMouseLeave(): void {
   pathPointer.value = null
   annotationHovered.value = false
+  canvasBackgroundHovered.value = false
   highlightedAnnotationKey.value = null
   endInteraction()
 }

@@ -27,7 +27,7 @@ function changeZoom(delta: number): void {
     <div class="tool-group shape-tools">
       <button v-for="tool in tools" :key="tool.id" type="button"
         :class="['tool-button', { active: activeTool === tool.id }]"
-        :title="tool.label" @click="chooseTool(tool.id)">
+        :title="tool.id === 'pan' ? '平移所选路径' : tool.label" @click="chooseTool(tool.id)">
         <span>{{ tool.icon }}</span><small>{{ tool.label }}</small>
       </button>
     </div>
