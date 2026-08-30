@@ -172,11 +172,21 @@ export const useEditorStore = defineStore('editor', () => {
 
   function restoreHistorySnapshot(entry: HistoryEntry): void {
     const { snapshot } = entry
-    gaugeInput.value = clonePlain(snapshot.gaugeInput)
-    fabric.value = clonePlain(snapshot.fabric)
-    shapes.value = cloneShapes(snapshot.shapes)
-    shapeDirections.value = clonePlain(snapshot.shapeDirections)
-    rasterOptions.value = clonePlain(snapshot.rasterOptions)
+    if (JSON.stringify(gaugeInput.value) !== JSON.stringify(snapshot.gaugeInput)) {
+      gaugeInput.value = clonePlain(snapshot.gaugeInput)
+    }
+    if (JSON.stringify(fabric.value) !== JSON.stringify(snapshot.fabric)) {
+      fabric.value = clonePlain(snapshot.fabric)
+    }
+    if (JSON.stringify(shapes.value) !== JSON.stringify(snapshot.shapes)) {
+      shapes.value = cloneShapes(snapshot.shapes)
+    }
+    if (JSON.stringify(shapeDirections.value) !== JSON.stringify(snapshot.shapeDirections)) {
+      shapeDirections.value = clonePlain(snapshot.shapeDirections)
+    }
+    if (JSON.stringify(rasterOptions.value) !== JSON.stringify(snapshot.rasterOptions)) {
+      rasterOptions.value = clonePlain(snapshot.rasterOptions)
+    }
     selectedShapeId.value = shapes.value.some((shape) => shape.id === snapshot.selectedShapeId)
       ? snapshot.selectedShapeId
       : shapes.value.at(-1)?.id ?? null

@@ -33,6 +33,15 @@ describe('Editor Store', () => {
     expect(store.shapes).toHaveLength(initialCount + 1)
   })
 
+  it('撤销无关操作时不替换画布尺寸状态', () => {
+    const store = useEditorStore()
+    const fabricState = store.fabric
+    store.addDefaultShape('circle')
+
+    store.undo()
+    expect(store.fabric).toBe(fabricState)
+  })
+
   it('每个图形独立生成计划，画布针格保持全部图形并集', () => {
     const store = useEditorStore()
     const starterId = store.shapes[0]!.id
