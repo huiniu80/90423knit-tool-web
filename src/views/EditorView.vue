@@ -2,7 +2,6 @@
 import { ref } from 'vue'
 import CanvasToolbar from '../components/CanvasToolbar.vue'
 import GaugePanel from '../components/GaugePanel.vue'
-import InstructionPanel from '../components/InstructionPanel.vue'
 import KnittingCanvas from '../components/KnittingCanvas.vue'
 import ShapePropertyPanel from '../components/ShapePropertyPanel.vue'
 import { useEditorStore } from '../stores/editor'
@@ -79,7 +78,6 @@ async function importJson(event: Event): Promise<void> {
       </section>
     </main>
 
-    <InstructionPanel />
     <Transition name="toast"><div v-if="notice" class="toast-message">{{ notice }}</div></Transition>
   </div>
 </template>
