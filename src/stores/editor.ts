@@ -25,11 +25,6 @@ interface HistorySnapshot {
   selectedPlanShapeId: string | null
 }
 
-export interface DeletedShapeSummary {
-  id: string
-  name: string
-}
-
 function isFabricShape(shape: Shape): boolean {
   return shape.type !== 'path' || shape.closed
 }
@@ -75,7 +70,6 @@ export const useEditorStore = defineStore('editor', () => {
 
   const undoStack = ref<HistorySnapshot[]>([])
   const redoStack = ref<HistorySnapshot[]>([])
-  const historyVersion = ref(0)
   let mutationStart: HistorySnapshot | null = null
 
   const gauge = computed(() => calculateGauge(gaugeInput.value))
@@ -164,7 +158,6 @@ export const useEditorStore = defineStore('editor', () => {
     undoStack.value.push(clonePlain(snapshot))
     if (undoStack.value.length > 100) undoStack.value.shift()
     redoStack.value = []
-    historyVersion.value += 1
   }
 
   function beginShapeMutation(): void {
@@ -256,14 +249,13 @@ export const useEditorStore = defineStore('editor', () => {
     })
   }
 
-  function deleteSelected(): DeletedShapeSummary | null {
+  function deleteSelected(): void {
     const deletedShape = selectedShape.value
-    if (!deletedShape) return null
+    if (!deletedShape) return
     pushUndo(captureHistorySnapshot())
     shapes.value = shapes.value.filter((shape) => shape.id !== deletedShape.id)
     selectedShapeId.value = shapes.value.at(-1)?.id ?? null
     ensureSelectedPlan()
-    return { id: deletedShape.id, name: deletedShape.name ?? '未命名图形' }
   }
 
   function undo(): void {
@@ -271,7 +263,6 @@ export const useEditorStore = defineStore('editor', () => {
     if (!previous) return
     redoStack.value.push(captureHistorySnapshot())
     restoreHistorySnapshot(previous)
-    historyVersion.value += 1
   }
 
   function redo(): void {
@@ -279,7 +270,6 @@ export const useEditorStore = defineStore('editor', () => {
     if (!next) return
     undoStack.value.push(captureHistorySnapshot())
     restoreHistorySnapshot(next)
-    historyVersion.value += 1
   }
 
   return {
@@ -302,7 +292,6 @@ export const useEditorStore = defineStore('editor', () => {
     selectedShapePlan,
     instructions,
     hasSeparatedRegions,
-    historyVersion: computed(() => historyVersion.value),
     canUndo: computed(() => undoStack.value.length > 0),
     canRedo: computed(() => redoStack.value.length > 0),
     beginShapeMutation,

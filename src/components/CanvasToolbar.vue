@@ -5,7 +5,7 @@ import type { EditorTool } from '../stores/editor.types'
 
 const emit = defineEmits<{ fit: [] }>()
 const store = useEditorStore()
-const { activeTool, canUndo, canRedo, zoom, viewMode } = storeToRefs(store)
+const { activeTool, canUndo, canRedo, selectedShape, zoom, viewMode } = storeToRefs(store)
 
 const tools: Array<{ id: EditorTool; icon: string; label: string }> = [
   { id: 'select', icon: '↖', label: '选择' },
@@ -46,6 +46,16 @@ function changeZoom(delta: number): void {
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="m15 7 5 5-5 5" />
           <path d="M20 12h-8a7 7 0 0 0-7 7" />
+        </svg>
+      </button>
+      <button class="history-button history-button--danger" type="button" title="删除所选图形"
+        aria-label="删除所选图形" aria-keyshortcuts="Delete Backspace" :disabled="!selectedShape"
+        @click="store.deleteSelected()">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 7h16" />
+          <path d="M9 7V4h6v3" />
+          <path d="m7 7 1 13h8l1-13" />
+          <path d="M10 11v5M14 11v5" />
         </svg>
       </button>
     </div>
