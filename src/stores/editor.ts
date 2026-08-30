@@ -1,4 +1,4 @@
-import { computed, ref, watch } from 'vue'
+import { computed, onScopeDispose, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { calculateFabricGrid, calculateGauge } from '../core/gauge/gauge'
 import type { GaugeInput, FabricCanvas } from '../core/gauge/gauge.types'
@@ -13,6 +13,13 @@ import type {
   ShapePlan,
   ViewMode,
 } from './editor.types'
+import {
+  EDITOR_DOCUMENT_VERSION,
+  getBrowserEditorStorage,
+  installEditorAutoSave,
+  loadEditorDocument,
+} from './editor.persistence'
+import type { PageLifecycleTarget, PersistedEditorDocument } from './editor.persistence'
 
 function clonePlain<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -64,22 +71,44 @@ function starterShapes(): Shape[] {
 }
 
 export const useEditorStore = defineStore('editor', () => {
-  const gaugeInput = ref<GaugeInput>({
+  const storage = getBrowserEditorStorage()
+  const persistedDocument = loadEditorDocument(storage)
+  const defaultGaugeInput: GaugeInput = {
     sampleStitches: 10,
     sampleRows: 10,
     sampleWidthCm: 10,
     sampleHeightCm: 6,
-  })
-  const fabric = ref<FabricCanvas>({ widthCm: 30, heightCm: 30 })
-  const shapes = ref<Shape[]>(starterShapes())
-  const selectedShapeId = ref<string | null>(shapes.value[0]?.id ?? null)
-  const selectedPlanShapeId = ref<string | null>(shapes.value[0]?.id ?? null)
-  const zoom = ref(20)
-  const shapeDirections = ref<Record<string, KnitDirection>>({})
-  const rasterOptions = ref<RasterOptions>({
+  }
+  const defaultFabric: FabricCanvas = { widthCm: 30, heightCm: 30 }
+  const defaultRasterOptions: RasterOptions = {
     mode: 'center',
     symmetryOptimization: true,
-  })
+  }
+  const initialShapes = persistedDocument ? cloneShapes(persistedDocument.shapes) : starterShapes()
+  const validInitialSelection = (shapeId: string | null): string | null => (
+    shapeId && initialShapes.some((shape) => shape.id === shapeId)
+      ? shapeId
+      : initialShapes.at(-1)?.id ?? null
+  )
+
+  const gaugeInput = ref<GaugeInput>(
+    clonePlain(persistedDocument?.gaugeInput ?? defaultGaugeInput),
+  )
+  const fabric = ref<FabricCanvas>(clonePlain(persistedDocument?.fabric ?? defaultFabric))
+  const shapes = ref<Shape[]>(initialShapes)
+  const selectedShapeId = ref<string | null>(
+    validInitialSelection(persistedDocument?.selectedShapeId ?? initialShapes[0]?.id ?? null),
+  )
+  const selectedPlanShapeId = ref<string | null>(
+    validInitialSelection(persistedDocument?.selectedPlanShapeId ?? selectedShapeId.value),
+  )
+  const zoom = ref(20)
+  const shapeDirections = ref<Record<string, KnitDirection>>(
+    clonePlain(persistedDocument?.shapeDirections ?? {}),
+  )
+  const rasterOptions = ref<RasterOptions>(
+    clonePlain(persistedDocument?.rasterOptions ?? defaultRasterOptions),
+  )
   const activeTool = ref<EditorTool>('path')
   const viewMode = ref<ViewMode>('overlay')
   const draftPoints = ref<Point[]>([])
@@ -153,6 +182,43 @@ export const useEditorStore = defineStore('editor', () => {
       selectedPlanShapeId.value = shapeId
     }
   }, { flush: 'sync' })
+
+  function createPersistedDocument(): PersistedEditorDocument {
+    const shapeIds = new Set(shapes.value.map((shape) => shape.id))
+    const validSelection = (shapeId: string | null): string | null => (
+      shapeId && shapeIds.has(shapeId) ? shapeId : shapes.value.at(-1)?.id ?? null
+    )
+    const validDirections = Object.fromEntries(
+      Object.entries(shapeDirections.value).filter(([shapeId]) => shapeIds.has(shapeId)),
+    )
+
+    return {
+      version: EDITOR_DOCUMENT_VERSION,
+      savedAt: new Date().toISOString(),
+      gaugeInput: clonePlain(gaugeInput.value),
+      fabric: clonePlain(fabric.value),
+      shapes: cloneShapes(shapes.value),
+      shapeDirections: validDirections,
+      rasterOptions: clonePlain(rasterOptions.value),
+      selectedShapeId: validSelection(selectedShapeId.value),
+      selectedPlanShapeId: validSelection(selectedPlanShapeId.value),
+    }
+  }
+
+  const pageLifecycleTarget: PageLifecycleTarget | null = typeof window === 'undefined'
+    ? null
+    : window
+  const autoSave = installEditorAutoSave({
+    createDocument: createPersistedDocument,
+    storage,
+    pageLifecycleTarget,
+  })
+  watch(
+    [gaugeInput, fabric, shapes, shapeDirections, rasterOptions, selectedShapeId, selectedPlanShapeId],
+    autoSave.schedule,
+    { deep: true },
+  )
+  onScopeDispose(autoSave.dispose)
 
   function captureHistorySnapshot(): HistorySnapshot {
     return {

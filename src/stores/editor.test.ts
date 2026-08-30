@@ -1,9 +1,133 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { nextTick } from 'vue'
 import { useEditorStore } from './editor'
+import { EDITOR_STORAGE_KEY } from './editor.persistence'
+
+class MemoryStorage {
+  readonly values = new Map<string, string>()
+  getItem(key: string): string | null {
+    return this.values.get(key) ?? null
+  }
+  setItem(key: string, value: string): void {
+    this.values.set(key, value)
+  }
+  removeItem(key: string): void {
+    this.values.delete(key)
+  }
+}
+
+function stubBrowser(storage: MemoryStorage): void {
+  vi.stubGlobal('window', {
+    localStorage: storage,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  })
+}
 
 describe('Editor Store', () => {
   beforeEach(() => setActivePinia(createPinia()))
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('自动保存源数据并在新会话中恢复', async () => {
+    vi.useFakeTimers()
+    const storage = new MemoryStorage()
+    stubBrowser(storage)
+    const store = useEditorStore()
+    const starterId = store.shapes[0]!.id
+
+    store.addDefaultShape('circle')
+    const circleId = store.selectedShapeId!
+    store.setGaugeInputValue('sampleStitches', 18)
+    store.setFabricValue('widthCm', 42)
+    store.setRasterOptions({ mode: 'inside' })
+    store.setShapeDirection(circleId, 'top-down')
+    await nextTick()
+    vi.advanceTimersByTime(300)
+    expect(storage.getItem(EDITOR_STORAGE_KEY)).not.toBeNull()
+    const expectedGrid = store.fabricGrid
+    store.$dispose()
+
+    setActivePinia(createPinia())
+    const restored = useEditorStore()
+    expect(restored.shapes.map((shape) => shape.id)).toEqual([starterId, circleId])
+    expect(restored.gaugeInput.sampleStitches).toBe(18)
+    expect(restored.fabric.widthCm).toBe(42)
+    expect(restored.rasterOptions.mode).toBe('inside')
+    expect(restored.direction).toBe('top-down')
+    expect(restored.selectedShapeId).toBe(circleId)
+    expect(restored.fabricGrid).toEqual(expectedGrid)
+    expect(restored.canUndo).toBe(false)
+    restored.$dispose()
+  })
+
+  it('空画布是有效存档，刷新后不会重新添加默认图形', async () => {
+    vi.useFakeTimers()
+    const storage = new MemoryStorage()
+    stubBrowser(storage)
+    const store = useEditorStore()
+    store.shapes.splice(0)
+    store.selectedShapeId = null
+    store.selectedPlanShapeId = null
+    await nextTick()
+    vi.advanceTimersByTime(300)
+    store.$dispose()
+
+    setActivePinia(createPinia())
+    const restored = useEditorStore()
+    expect(restored.shapes).toEqual([])
+    expect(restored.selectedShapeId).toBeNull()
+    restored.$dispose()
+  })
+
+  it('刷新只恢复完成内容，不恢复绘制草稿和界面状态', async () => {
+    vi.useFakeTimers()
+    const storage = new MemoryStorage()
+    stubBrowser(storage)
+    const store = useEditorStore()
+    store.zoom = 48
+    store.viewMode = 'grid'
+    store.activeTool = 'path'
+    store.addDraftPathNode({ anchor: { x: 2, y: 2 } })
+    store.setGaugeInputValue('sampleRows', 16)
+    await nextTick()
+    vi.advanceTimersByTime(300)
+    store.$dispose()
+
+    setActivePinia(createPinia())
+    const restored = useEditorStore()
+    expect(restored.gaugeInput.sampleRows).toBe(16)
+    expect(restored.draftPathNodes).toEqual([])
+    expect(restored.zoom).toBe(20)
+    expect(restored.viewMode).toBe('overlay')
+    expect(restored.activeTool).toBe('path')
+    expect(restored.canUndo).toBe(false)
+    restored.$dispose()
+  })
+
+  it('恢复时会将无效的选中图形回退到最后一个有效图形', () => {
+    const storage = new MemoryStorage()
+    storage.setItem(EDITOR_STORAGE_KEY, JSON.stringify({
+      version: 1,
+      savedAt: '2026-08-30T00:00:00.000Z',
+      gaugeInput: { sampleStitches: 10, sampleRows: 10, sampleWidthCm: 10, sampleHeightCm: 6 },
+      fabric: { widthCm: 30, heightCm: 30 },
+      shapes: [{ id: 'valid', type: 'circle', center: { x: 5, y: 5 }, radiusCm: 3 }],
+      shapeDirections: {},
+      rasterOptions: { mode: 'center', symmetryOptimization: true },
+      selectedShapeId: 'missing',
+      selectedPlanShapeId: 'missing',
+    }))
+    stubBrowser(storage)
+
+    const store = useEditorStore()
+    expect(store.selectedShapeId).toBe('valid')
+    expect(store.selectedPlanShapeId).toBe('valid')
+    store.$dispose()
+  })
 
   it('首次进入编辑器默认启用路径工具', () => {
     const store = useEditorStore()
