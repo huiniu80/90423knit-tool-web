@@ -167,6 +167,62 @@ describe('Editor Store', () => {
     expect(store.selectedShape?.type === 'path' && store.selectedShape.nodes[1]?.inControl).toEqual({ x: 6, y: 4 })
   })
 
+  it('导入路径原子替换选中图形并保留名称、位置和方向', () => {
+    const store = useEditorStore()
+    const target = store.selectedShape!
+    const targetId = target.id
+    store.replaceShape({ ...target, name: '前片' })
+    store.setShapeDirection(targetId, 'top-down')
+
+    store.commitImportedPath({
+      targetShapeId: targetId,
+      widthCm: 25,
+      heightCm: 28,
+      nodes: [
+        { anchor: { x: 0, y: 0 } },
+        { anchor: { x: 25, y: 0 } },
+        { anchor: { x: 25, y: 28 } },
+        { anchor: { x: 0, y: 28 } },
+      ],
+    })
+
+    expect(store.selectedShape).toMatchObject({ id: targetId, name: '前片', type: 'path', closed: true })
+    expect(store.direction).toBe('top-down')
+    expect(store.fabric).toEqual({ widthCm: 35, heightCm: 36 })
+    expect(store.selectedShape?.type === 'path' && store.selectedShape.nodes[0]?.anchor).toEqual({ x: 10, y: 8 })
+
+    store.undo()
+    expect(store.selectedShape).toMatchObject({ id: targetId, name: '前片', type: 'triangle' })
+    expect(store.fabric).toEqual({ widthCm: 30, heightCm: 30 })
+    store.redo()
+    expect(store.selectedShape).toMatchObject({ id: targetId, type: 'path' })
+    expect(store.fabric).toEqual({ widthCm: 35, heightCm: 36 })
+  })
+
+  it('无选中图形时新增导入路径、居中放置并按需扩展画布', () => {
+    const store = useEditorStore()
+    const initialCount = store.shapes.length
+    store.selectedShapeId = null
+    store.commitImportedPath({
+      targetShapeId: null,
+      name: '导入织片',
+      widthCm: 36,
+      heightCm: 20,
+      nodes: [
+        { anchor: { x: 0, y: 0 } },
+        { anchor: { x: 36, y: 0 } },
+        { anchor: { x: 36, y: 20 } },
+        { anchor: { x: 0, y: 20 } },
+      ],
+    })
+    expect(store.shapes).toHaveLength(initialCount + 1)
+    expect(store.fabric).toEqual({ widthCm: 36, heightCm: 30 })
+    expect(store.selectedShape?.type === 'path' && store.selectedShape.nodes[0]?.anchor).toEqual({ x: 0, y: 5 })
+    expect(store.direction).toBe('bottom-up')
+    expect(store.activeTool).toBe('select')
+    expect(store.viewMode).toBe('overlay')
+  })
+
   it('连续绘制按每次落点和完成操作逐步撤销与重做', () => {
     const store = useEditorStore()
     const initialCount = store.shapes.length
