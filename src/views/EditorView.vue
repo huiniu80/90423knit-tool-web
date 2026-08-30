@@ -1,18 +1,11 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
+import { ref } from 'vue'
 import CanvasToolbar from '../components/CanvasToolbar.vue'
 import GaugePanel from '../components/GaugePanel.vue'
-import ImageImportDialog from '../components/ImageImportDialog.vue'
 import KnittingCanvas from '../components/KnittingCanvas.vue'
 import ShapePropertyPanel from '../components/ShapePropertyPanel.vue'
 
 const canvasRef = ref<InstanceType<typeof KnittingCanvas> | null>(null)
-const showImageImport = ref(false)
-
-function finishImageImport(): void {
-  showImageImport.value = false
-  nextTick(() => canvasRef.value?.fitCanvas())
-}
 </script>
 
 <template>
@@ -36,12 +29,9 @@ function finishImageImport(): void {
       </aside>
 
       <section class="workspace">
-        <CanvasToolbar @fit="canvasRef?.fitCanvas()" @export="canvasRef?.exportCanvas()"
-          @import="showImageImport = true" />
+        <CanvasToolbar @fit="canvasRef?.fitCanvas()" @export="canvasRef?.exportCanvas()" />
         <KnittingCanvas ref="canvasRef" />
       </section>
     </main>
-    <ImageImportDialog v-if="showImageImport" @close="showImageImport = false"
-      @imported="finishImageImport" />
   </div>
 </template>

@@ -3,7 +3,6 @@ import { defineStore } from 'pinia'
 import { calculateFabricGrid, calculateGauge } from '../core/gauge/gauge'
 import type { GaugeInput, FabricCanvas } from '../core/gauge/gauge.types'
 import type { PathNode, PathShape, Point, Shape, ShapeType } from '../core/geometry/shape.types'
-import { getShapeBounds } from '../core/geometry/geometry'
 import { joinConnectedOpenPaths } from '../core/geometry/path'
 import { generateInstructions } from '../core/knitting/planner'
 import type { KnitDirection } from '../core/knitting/planner.types'
@@ -11,7 +10,6 @@ import { rasterize, rasterizeShapes } from '../core/raster/rasterizer'
 import type { RasterOptions } from '../core/raster/raster.types'
 import type {
   EditorTool,
-  ImportedPathCommit,
   ShapePlan,
   ViewMode,
 } from './editor.types'
@@ -353,47 +351,6 @@ export const useEditorStore = defineStore('editor', () => {
     insertPath(nodes, closed)
   }
 
-  function commitImportedPath(input: ImportedPathCommit): PathShape {
-    if (input.nodes.length < 3 || input.widthCm <= 0 || input.heightCm <= 0) {
-      throw new Error('导入轮廓无效')
-    }
-    pushUndo(captureHistorySnapshot())
-    const targetIndex = input.targetShapeId
-      ? shapes.value.findIndex((shape) => shape.id === input.targetShapeId)
-      : -1
-    const target = targetIndex >= 0 ? shapes.value[targetIndex]! : null
-    const targetBounds = target ? getShapeBounds(target) : null
-    const nextWidth = targetBounds
-      ? Math.max(fabric.value.widthCm, Math.ceil(targetBounds.x + input.widthCm))
-      : Math.max(fabric.value.widthCm, Math.ceil(input.widthCm))
-    const nextHeight = targetBounds
-      ? Math.max(fabric.value.heightCm, Math.ceil(targetBounds.y + input.heightCm))
-      : Math.max(fabric.value.heightCm, Math.ceil(input.heightCm))
-    const origin = targetBounds
-      ? { x: targetBounds.x, y: targetBounds.y }
-      : { x: (nextWidth - input.widthCm) / 2, y: (nextHeight - input.heightCm) / 2 }
-    const translatePoint = (point: Point): Point => ({ x: point.x + origin.x, y: point.y + origin.y })
-    const path: PathShape = {
-      id: target?.id ?? createId(),
-      name: target?.name ?? input.name ?? '导入织片',
-      type: 'path',
-      closed: true,
-      nodes: clonePlain(input.nodes).map((node) => ({
-        anchor: translatePoint(node.anchor),
-        inControl: node.inControl ? translatePoint(node.inControl) : undefined,
-        outControl: node.outControl ? translatePoint(node.outControl) : undefined,
-      })),
-    }
-    if (targetIndex >= 0) shapes.value[targetIndex] = path
-    else shapes.value.push(path)
-    fabric.value = { widthCm: nextWidth, heightCm: nextHeight }
-    selectedShapeId.value = path.id
-    selectedPlanShapeId.value = path.id
-    activeTool.value = 'select'
-    viewMode.value = 'overlay'
-    return path
-  }
-
   function beginDrawing(tool: 'polygon' | 'path'): string {
     if (draftTool.value !== tool || !drawingSessionId.value) {
       draftPoints.value = []
@@ -524,7 +481,6 @@ export const useEditorStore = defineStore('editor', () => {
     addDefaultShape,
     addPolygon,
     addPath,
-    commitImportedPath,
     addDraftPoint,
     addDraftPathNode,
     finishPolygonDraft,
