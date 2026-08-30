@@ -2,7 +2,8 @@ import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { calculateFabricGrid, calculateGauge } from '../core/gauge/gauge'
 import type { GaugeInput, FabricCanvas } from '../core/gauge/gauge.types'
-import type { PathNode, Point, Shape, ShapeType } from '../core/geometry/shape.types'
+import type { PathNode, PathShape, Point, Shape, ShapeType } from '../core/geometry/shape.types'
+import { joinConnectedOpenPaths } from '../core/geometry/path'
 import { generateInstructions } from '../core/knitting/planner'
 import type { KnitDirection } from '../core/knitting/planner.types'
 import { rasterize, rasterizeShapes } from '../core/raster/rasterizer'
@@ -240,13 +241,38 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   function addPath(nodes: PathNode[], closed: boolean): void {
-    addShape({
+    const history = captureHistorySnapshot()
+    let path: PathShape = {
       id: createId(),
       name: closed ? '自定义闭合路径' : '自定义开放路径',
-      type: 'path',
+      type: 'path' as const,
       nodes,
       closed,
-    })
+    }
+    const joinedShapeIds = new Set<string>()
+
+    if (!closed) {
+      let joined = true
+      while (joined && !path.closed) {
+        joined = false
+        for (const shape of shapes.value) {
+          if (shape.type !== 'path' || shape.closed || joinedShapeIds.has(shape.id)) continue
+          const merged = joinConnectedOpenPaths(path, shape)
+          if (!merged) continue
+          path = merged
+          joinedShapeIds.add(shape.id)
+          joined = true
+          break
+        }
+      }
+    }
+
+    pushUndo(history)
+    shapes.value = shapes.value.filter((shape) => !joinedShapeIds.has(shape.id))
+    shapes.value.push(path)
+    selectedShapeId.value = path.id
+    selectedPlanShapeId.value = path.id
+    activeTool.value = 'select'
   }
 
   function deleteSelected(): void {

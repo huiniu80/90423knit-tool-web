@@ -1,6 +1,6 @@
 import type { FabricCanvas, Gauge } from '../gauge/gauge.types'
 import { calculateFabricGrid } from '../gauge/gauge'
-import { getHorizontalIntervals } from '../geometry/geometry'
+import { getHorizontalIntervals, getShapeBounds } from '../geometry/geometry'
 import { flattenPath } from '../geometry/path'
 import type { HorizontalInterval, PathShape, Point, Shape } from '../geometry/shape.types'
 import type {
@@ -137,6 +137,42 @@ function columnsToSegments(columns: ReadonlySet<number>): StitchSegment[] {
   return segments
 }
 
+function segmentsToColumns(segments: readonly StitchSegment[]): Set<number> {
+  const columns = new Set<number>()
+  segments.forEach((segment) => {
+    for (let column = segment.startStitch; column <= segment.endStitch; column += 1) {
+      columns.add(column)
+    }
+  })
+  return columns
+}
+
+function mirrorSegments(
+  segments: readonly StitchSegment[],
+  centerStitchCoordinate: number,
+  columnCount: number,
+): StitchSegment[] {
+  if (!segments.length) return []
+  // 将几何中心吸附到半针位置，确保 column -> mirror -> column 可逆。
+  const axis = Math.round(centerStitchCoordinate * 2) / 2
+  const source = segmentsToColumns(segments)
+  const leftColumns = [...source].filter((column) => column + 0.5 < axis - EPSILON)
+  const rightColumns = [...source].filter((column) => column + 0.5 > axis + EPSILON)
+  const useLeftSide = leftColumns.length > 0 || rightColumns.length === 0
+  const canonical = useLeftSide ? leftColumns : rightColumns
+  const mirrored = new Set<number>()
+
+  canonical.forEach((column) => {
+    const reflected = Math.round(2 * axis - column - 1)
+    if (column >= 0 && column < columnCount) mirrored.add(column)
+    if (reflected >= 0 && reflected < columnCount) mirrored.add(reflected)
+  })
+  source.forEach((column) => {
+    if (Math.abs(column + 0.5 - axis) <= EPSILON) mirrored.add(column)
+  })
+  return columnsToSegments(mirrored)
+}
+
 export function rasterizeOpenPath(
   path: PathShape,
   gauge: Gauge,
@@ -183,14 +219,19 @@ function rasterizeFilledShape(
   options: RasterOptions,
 ): RasterRow[] {
   const { columnCount, rowCount } = calculateFabricGrid(canvas, gauge)
+  const bounds = getShapeBounds(shape)
+  const centerStitchCoordinate = (bounds.x + bounds.width / 2) / gauge.stitchWidthCm
   const segmentsByRow = Array.from({ length: rowCount }, (_, rowIndex) => {
     const yCm = (rowIndex + 0.5) * gauge.rowHeightCm
-    return mergeAndClipSegments(
+    const segments = mergeAndClipSegments(
       getHorizontalIntervals(shape, yCm).map((interval) =>
         intervalToSegment(interval, gauge.stitchWidthCm, options.mode),
       ),
       columnCount,
     )
+    return options.symmetryOptimization
+      ? mirrorSegments(segments, centerStitchCoordinate, columnCount)
+      : segments
   })
   return rowsFromSegments(segmentsByRow, rowCount, gauge.rowHeightCm)
 }

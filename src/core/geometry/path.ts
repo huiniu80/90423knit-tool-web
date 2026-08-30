@@ -27,6 +27,85 @@ export interface PathEndpointSnap {
   distance: number
 }
 
+function pointsMatch(left: Point, right: Point, tolerance: number): boolean {
+  return Math.hypot(left.x - right.x, left.y - right.y) <= tolerance
+}
+
+function reversePathNodes(nodes: readonly PathNode[]): PathNode[] {
+  return [...nodes].reverse().map((node) => ({
+    anchor: { ...node.anchor },
+    inControl: node.outControl ? { ...node.outControl } : undefined,
+    outControl: node.inControl ? { ...node.inControl } : undefined,
+  }))
+}
+
+function joinEndToStart(
+  first: readonly PathNode[],
+  second: readonly PathNode[],
+): PathNode[] {
+  const firstEnd = first.at(-1)!
+  const secondStart = second[0]!
+  const joinedNode: PathNode = {
+    anchor: { ...firstEnd.anchor },
+    inControl: firstEnd.inControl ? { ...firstEnd.inControl } : undefined,
+    outControl: secondStart.outControl ? { ...secondStart.outControl } : undefined,
+  }
+  return [
+    ...first.slice(0, -1).map((node) => ({ ...node })),
+    joinedNode,
+    ...second.slice(1).map((node) => ({ ...node })),
+  ]
+}
+
+/**
+ * 将端点相接的两条开放路径拼成一条连续路径，并保留连接处两侧的控制柄。
+ * 返回 null 表示两条路径的端点没有相接。
+ */
+export function joinConnectedOpenPaths(
+  first: PathShape,
+  second: PathShape,
+  tolerance = 1e-6,
+): PathShape | null {
+  if (first.closed || second.closed || first.nodes.length < 2 || second.nodes.length < 2) {
+    return null
+  }
+
+  const firstStart = first.nodes[0]!.anchor
+  const firstEnd = first.nodes.at(-1)!.anchor
+  const secondStart = second.nodes[0]!.anchor
+  const secondEnd = second.nodes.at(-1)!.anchor
+  let nodes: PathNode[] | null = null
+
+  if (pointsMatch(firstEnd, secondStart, tolerance)) {
+    nodes = joinEndToStart(first.nodes, second.nodes)
+  } else if (pointsMatch(firstEnd, secondEnd, tolerance)) {
+    nodes = joinEndToStart(first.nodes, reversePathNodes(second.nodes))
+  } else if (pointsMatch(firstStart, secondEnd, tolerance)) {
+    nodes = joinEndToStart(second.nodes, first.nodes)
+  } else if (pointsMatch(firstStart, secondStart, tolerance)) {
+    nodes = joinEndToStart(reversePathNodes(second.nodes), first.nodes)
+  }
+  if (!nodes) return null
+
+  const start = nodes[0]!
+  const end = nodes.at(-1)!
+  const closesLoop = nodes.length >= 4 && pointsMatch(start.anchor, end.anchor, tolerance)
+  if (closesLoop) {
+    nodes[0] = {
+      ...start,
+      inControl: end.inControl ? { ...end.inControl } : start.inControl,
+    }
+    nodes.pop()
+  }
+
+  return {
+    ...first,
+    name: closesLoop ? '自定义闭合路径' : first.name,
+    nodes,
+    closed: closesLoop,
+  }
+}
+
 function lerpPoint(start: Point, end: Point, t: number): Point {
   return {
     x: start.x + (end.x - start.x) * t,

@@ -30,6 +30,7 @@ describe('分段加减针说明', () => {
 
     expect(description.boundarySide).toBe('both')
     expect(description.lines.some((line) => line.includes('领口起始'))).toBe(true)
+    expect(description.lines.some((line) => line.includes('分开编织'))).toBe(true)
     expect(description.lines.some((line) => line.includes('左肩领口侧'))).toBe(true)
     expect(description.lines.some((line) => line.includes('右肩领口侧'))).toBe(true)
     expect(description.lines.some((line) => line.includes('减'))).toBe(true)
@@ -39,6 +40,32 @@ describe('分段加减针说明', () => {
     expect(description.markers.every((marker, index) =>
       index === 0 || marker.point.y >= description.markers[index - 1]!.point.y,
     )).toBe(true)
+  })
+
+  it('身体直边标明实际平织行数和不加不减', () => {
+    const path: PathShape = {
+      id: 'body',
+      type: 'path',
+      closed: true,
+      nodes: [
+        { anchor: { x: 2, y: 2 } },
+        { anchor: { x: 10, y: 2 } },
+        { anchor: { x: 10, y: 8 } },
+        { anchor: { x: 2, y: 8 } },
+      ],
+    }
+    const segment = getShapeBoundarySegments(path)[1]!
+    const description = describeBoundarySegmentShaping(
+      segment,
+      'bottom-up',
+      { stitchWidthCm: 1, rowHeightCm: 1, stitchesPerCm: 1, rowsPerCm: 1 },
+      { widthCm: 12, heightCm: 12 },
+      { mode: 'center', symmetryOptimization: true },
+      6,
+    )
+
+    expect(description.lines.some((line) => line.includes('不加不减'))).toBe(true)
+    expect(description.lines.some((line) => line.includes('平织 6 行'))).toBe(true)
   })
 
   it('开放曲线不再被当成织片', () => {

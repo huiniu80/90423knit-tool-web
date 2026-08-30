@@ -76,6 +76,34 @@ describe('Rasterizer', () => {
     )
   })
 
+  it('对称优化按织片中心线镜像针格并保持左右肩针数一致', () => {
+    const shape: Shape = {
+      id: 'slightly-asymmetric-neck',
+      type: 'path',
+      closed: true,
+      nodes: [
+        { anchor: { x: 2, y: 0 } },
+        { anchor: { x: 12, y: 0 } },
+        { anchor: { x: 12, y: 6 } },
+        { anchor: { x: 9, y: 6 } },
+        { anchor: { x: 8, y: 3 } },
+        { anchor: { x: 5.2, y: 3 } },
+        { anchor: { x: 5, y: 6 } },
+        { anchor: { x: 2, y: 6 } },
+      ],
+    }
+    const upperRows = rasterize(shape, gauge, canvas, {
+      mode: 'center', symmetryOptimization: true,
+    }).filter((row) => row.segments.length === 2)
+
+    expect(upperRows.length).toBeGreaterThan(0)
+    expect(upperRows.every((row) => {
+      const [left, right] = row.segments
+      return left && right
+        && left.endStitch - left.startStitch === right.endStitch - right.startStitch
+    })).toBe(true)
+  })
+
   it('开放路径按曲线经过的针格生成针格，闭合路径仍按面积计算', () => {
     const path: Shape = {
       id: 'path', type: 'path', closed: false,

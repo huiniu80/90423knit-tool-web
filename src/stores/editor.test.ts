@@ -152,4 +152,34 @@ describe('Editor Store', () => {
     expect(store.selectedShape?.type === 'path' && store.selectedShape.nodes[1]?.inControl).toEqual({ x: 6, y: 4 })
   })
 
+  it('相接的开放路径自动拼合并在围成轮廓时转为织片', () => {
+    const store = useEditorStore()
+    const initialCount = store.shapes.length
+    store.addPath([
+      { anchor: { x: 2, y: 2 } },
+      { anchor: { x: 8, y: 2 } },
+    ], false)
+    store.addPath([
+      { anchor: { x: 8, y: 2 } },
+      { anchor: { x: 8, y: 8 } },
+    ], false)
+    store.addPath([
+      { anchor: { x: 8, y: 8 } },
+      { anchor: { x: 2, y: 8 } },
+    ], false)
+    store.addPath([
+      { anchor: { x: 2, y: 8 } },
+      { anchor: { x: 2, y: 2 } },
+    ], false)
+
+    expect(store.shapes).toHaveLength(initialCount + 1)
+    expect(store.selectedShape).toMatchObject({
+      type: 'path',
+      closed: true,
+      name: '自定义闭合路径',
+    })
+    expect(store.selectedShapePlan?.isFabric).toBe(true)
+    expect(store.selectedShapePlan?.instructions[0]?.isCastOn).toBe(true)
+  })
+
 })
