@@ -497,7 +497,7 @@ const pathSnapPreview = computed(() => {
   return snap ? { point: snap.point, kind: 'endpoint' as const } : null
 })
 
-function pointerFromEvent(event: KonvaEventObject<MouseEvent | WheelEvent>): Point | null {
+function pointerFromEvent(event: KonvaEventObject<PointerEvent | WheelEvent>): Point | null {
   const position = event.target.getStage()?.getPointerPosition()
   return position ? { x: position.x, y: position.y } : null
 }
@@ -514,7 +514,7 @@ function worldFromScreen(screen: Point, clampToFabric = false): Point {
   }
 }
 
-function targetName(event: KonvaEventObject<MouseEvent>): string {
+function targetName(event: KonvaEventObject<PointerEvent>): string {
   return event.target.name?.() ?? ''
 }
 
@@ -561,7 +561,7 @@ function beginResize(shape: Shape, corner: Corner): void {
   interaction.value = { kind: 'resize', corner, anchor: opposite[corner], shape: clonePlain(shape) }
 }
 
-function onMouseDown(event: KonvaEventObject<MouseEvent>): void {
+function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
   host.value?.focus()
   const pointer = pointerFromEvent(event)
   if (!pointer) return
@@ -697,7 +697,7 @@ function onMouseDown(event: KonvaEventObject<MouseEvent>): void {
   selectedPathNodeIndex.value = null
 }
 
-function onMouseMove(event: KonvaEventObject<MouseEvent>): void {
+function onPointerMove(event: KonvaEventObject<PointerEvent>): void {
   const pointer = pointerFromEvent(event)
   const current = interaction.value
   if (!pointer) return
@@ -774,7 +774,7 @@ function endInteraction(): void {
   interaction.value = null
 }
 
-function onMouseLeave(): void {
+function onPointerLeave(): void {
   pathPointer.value = null
   annotationHovered.value = false
   canvasBackgroundHovered.value = false
@@ -782,7 +782,7 @@ function onMouseLeave(): void {
   endInteraction()
 }
 
-function onStageClick(event: KonvaEventObject<MouseEvent>): void {
+function onStagePointerClick(event: KonvaEventObject<PointerEvent>): void {
   if (annotationCardTarget(targetName(event))) return
   if (activeTool.value !== 'polygon' && activeTool.value !== 'path') return
   const pointer = pointerFromEvent(event)
@@ -856,7 +856,7 @@ function nearestEdgeInsertion(shape: PolygonShape, point: Point): number {
   return bestIndex
 }
 
-function onDoubleClick(event: KonvaEventObject<MouseEvent>): void {
+function onPointerDoubleClick(event: KonvaEventObject<PointerEvent>): void {
   if (activeTool.value !== 'select' || !selectedShape.value) return
   const name = targetName(event)
   const pointer = pointerFromEvent(event)
@@ -1089,8 +1089,9 @@ defineExpose({ fitCanvas, exportCanvas })
 <template>
   <div ref="host" class="knitting-canvas" tabindex="0" :style="{ cursor: stageCursor }">
     <v-stage ref="stageRef" :config="{ width: stageSize.width, height: stageSize.height }"
-      @mousedown="onMouseDown" @mousemove="onMouseMove" @mouseup="endInteraction"
-      @mouseleave="onMouseLeave" @click="onStageClick" @dblclick="onDoubleClick" @wheel="onWheel">
+      @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="endInteraction"
+      @pointercancel="onPointerLeave" @pointerleave="onPointerLeave"
+      @pointerclick="onStagePointerClick" @pointerdblclick="onPointerDoubleClick" @wheel="onWheel">
       <v-layer>
         <v-group :config="{ x: pan.x, y: pan.y }">
           <v-rect :config="{
