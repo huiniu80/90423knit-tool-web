@@ -5,6 +5,12 @@ import { useEditorStore } from './editor'
 describe('Editor Store', () => {
   beforeEach(() => setActivePinia(createPinia()))
 
+  it('首次进入编辑器默认启用路径工具', () => {
+    const store = useEditorStore()
+
+    expect(store.activeTool).toBe('path')
+  })
+
   it('源数据修改后密度、针格和指令自动重算', () => {
     const store = useEditorStore()
     expect(store.fabricGrid).toEqual({ columnCount: 30, rowCount: 50 })

@@ -80,7 +80,7 @@ export const useEditorStore = defineStore('editor', () => {
     mode: 'center',
     symmetryOptimization: true,
   })
-  const activeTool = ref<EditorTool>('select')
+  const activeTool = ref<EditorTool>('path')
   const viewMode = ref<ViewMode>('overlay')
   const draftPoints = ref<Point[]>([])
   const draftPathNodes = ref<PathNode[]>([])
