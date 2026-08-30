@@ -27,6 +27,11 @@ export interface PathEndpointSnap {
   distance: number
 }
 
+export interface PathSymmetry {
+  axisX: number
+  pairedNodeIndexes: number[]
+}
+
 function pointsMatch(left: Point, right: Point, tolerance: number): boolean {
   return Math.hypot(left.x - right.x, left.y - right.y) <= tolerance
 }
@@ -104,6 +109,248 @@ export function joinConnectedOpenPaths(
     nodes,
     closed: closesLoop,
   }
+}
+
+function mirrorPointAcrossAxis(point: Point, axisX: number): Point {
+  return { x: axisX * 2 - point.x, y: point.y }
+}
+
+function clonePathNode(node: PathNode): PathNode {
+  return {
+    anchor: { ...node.anchor },
+    inControl: node.inControl ? { ...node.inControl } : undefined,
+    outControl: node.outControl ? { ...node.outControl } : undefined,
+  }
+}
+
+/**
+ * 只为已经近似对称的闭合路径建立配对。若任一非中心节点找不到镜像节点，
+ * 返回 null，调用方应保持自由编辑，不能擅自覆盖另一侧。
+ */
+export function detectPathSymmetry(
+  path: PathShape,
+  tolerance: number,
+  axisStep?: number,
+): PathSymmetry | null {
+  if (!path.closed || path.nodes.length < 3) return null
+  const bounds = getPathBounds(path)
+  const rawAxisX = bounds.x + bounds.width / 2
+  const axisX = axisStep && axisStep > 0
+    ? Math.round(rawAxisX / axisStep) * axisStep
+    : rawAxisX
+  const pairs = Array.from({ length: path.nodes.length }, () => -1)
+  const available = new Set(path.nodes.map((_, index) => index))
+
+  for (let index = 0; index < path.nodes.length; index += 1) {
+    if (pairs[index] !== -1) continue
+    const node = path.nodes[index]!
+    if (Math.abs(node.anchor.x - axisX) <= tolerance) {
+      pairs[index] = index
+      available.delete(index)
+      continue
+    }
+    const target = mirrorPointAcrossAxis(node.anchor, axisX)
+    let match = -1
+    let nearestDistance = Number.POSITIVE_INFINITY
+    for (const candidateIndex of available) {
+      if (candidateIndex === index) continue
+      const candidate = path.nodes[candidateIndex]!
+      const distance = Math.hypot(candidate.anchor.x - target.x, candidate.anchor.y - target.y)
+      if (distance <= tolerance && distance < nearestDistance) {
+        match = candidateIndex
+        nearestDistance = distance
+      }
+    }
+    if (match === -1) return null
+    pairs[index] = match
+    pairs[match] = index
+    available.delete(index)
+    available.delete(match)
+  }
+
+  return { axisX, pairedNodeIndexes: pairs }
+}
+
+function averagePoint(first: Point, second: Point): Point {
+  return { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 }
+}
+
+function normalizedMirroredControl(
+  first: Point | undefined,
+  mirroredSecond: Point | undefined,
+): Point | undefined {
+  if (first && mirroredSecond) return averagePoint(first, mirroredSecond)
+  return first ? { ...first } : mirroredSecond ? { ...mirroredSecond } : undefined
+}
+
+export function normalizePathWithSymmetry(
+  path: PathShape,
+  symmetry: PathSymmetry,
+): PathShape {
+  const nodes = path.nodes.map(clonePathNode)
+  const visited = new Set<number>()
+
+  nodes.forEach((node, index) => {
+    if (visited.has(index)) return
+    const pairedIndex = symmetry.pairedNodeIndexes[index]
+    if (pairedIndex === undefined || pairedIndex < 0) return
+    visited.add(index)
+    visited.add(pairedIndex)
+
+    if (pairedIndex === index) {
+      node.anchor.x = symmetry.axisX
+      const normalizedIn = normalizedMirroredControl(
+        node.inControl,
+        node.outControl ? mirrorPointAcrossAxis(node.outControl, symmetry.axisX) : undefined,
+      )
+      node.inControl = normalizedIn
+      node.outControl = normalizedIn
+        ? mirrorPointAcrossAxis(normalizedIn, symmetry.axisX)
+        : undefined
+      return
+    }
+
+    const paired = nodes[pairedIndex]!
+    const leftIndex = node.anchor.x <= paired.anchor.x ? index : pairedIndex
+    const rightIndex = leftIndex === index ? pairedIndex : index
+    const left = nodes[leftIndex]!
+    const right = nodes[rightIndex]!
+    const normalizedAnchor = averagePoint(
+      left.anchor,
+      mirrorPointAcrossAxis(right.anchor, symmetry.axisX),
+    )
+    const normalizedIn = normalizedMirroredControl(
+      left.inControl,
+      right.outControl ? mirrorPointAcrossAxis(right.outControl, symmetry.axisX) : undefined,
+    )
+    const normalizedOut = normalizedMirroredControl(
+      left.outControl,
+      right.inControl ? mirrorPointAcrossAxis(right.inControl, symmetry.axisX) : undefined,
+    )
+    left.anchor = normalizedAnchor
+    left.inControl = normalizedIn
+    left.outControl = normalizedOut
+    right.anchor = mirrorPointAcrossAxis(normalizedAnchor, symmetry.axisX)
+    right.inControl = normalizedOut
+      ? mirrorPointAcrossAxis(normalizedOut, symmetry.axisX)
+      : undefined
+    right.outControl = normalizedIn
+      ? mirrorPointAcrossAxis(normalizedIn, symmetry.axisX)
+      : undefined
+  })
+  return { ...path, nodes }
+}
+
+export function movePathNodeWithSymmetry(
+  path: PathShape,
+  nodeIndex: number,
+  target: Point,
+  symmetry: PathSymmetry | null,
+): PathShape {
+  const normalized = symmetry ? normalizePathWithSymmetry(path, symmetry) : path
+  const nodes = normalized.nodes.map(clonePathNode)
+  const source = nodes[nodeIndex]
+  if (!source) return path
+  const pairedIndex = symmetry?.pairedNodeIndexes[nodeIndex] ?? -1
+  const nextTarget = pairedIndex === nodeIndex && symmetry
+    ? { x: symmetry.axisX, y: target.y }
+    : target
+  const deltaX = nextTarget.x - source.anchor.x
+  const deltaY = nextTarget.y - source.anchor.y
+  source.anchor = nextTarget
+  if (source.inControl) {
+    source.inControl = { x: source.inControl.x + deltaX, y: source.inControl.y + deltaY }
+  }
+  if (source.outControl) {
+    source.outControl = { x: source.outControl.x + deltaX, y: source.outControl.y + deltaY }
+  }
+
+  if (symmetry && pairedIndex >= 0 && pairedIndex !== nodeIndex) {
+    const paired = nodes[pairedIndex]!
+    paired.anchor = mirrorPointAcrossAxis(source.anchor, symmetry.axisX)
+    paired.inControl = source.outControl
+      ? mirrorPointAcrossAxis(source.outControl, symmetry.axisX)
+      : undefined
+    paired.outControl = source.inControl
+      ? mirrorPointAcrossAxis(source.inControl, symmetry.axisX)
+      : undefined
+  }
+  return { ...normalized, nodes }
+}
+
+export function movePathControlWithSymmetry(
+  path: PathShape,
+  nodeIndex: number,
+  control: 'inControl' | 'outControl',
+  target: Point,
+  symmetry: PathSymmetry | null,
+): PathShape {
+  const normalized = symmetry ? normalizePathWithSymmetry(path, symmetry) : path
+  const nodes = normalized.nodes.map(clonePathNode)
+  const source = nodes[nodeIndex]
+  if (!source) return path
+  source[control] = target
+  const pairedIndex = symmetry?.pairedNodeIndexes[nodeIndex] ?? -1
+  if (symmetry && pairedIndex >= 0) {
+    const pairedControl = control === 'inControl' ? 'outControl' : 'inControl'
+    nodes[pairedIndex]![pairedControl] = mirrorPointAcrossAxis(target, symmetry.axisX)
+  }
+  return { ...normalized, nodes }
+}
+
+function mirroredSegmentIndex(
+  path: PathShape,
+  segmentIndex: number,
+  symmetry: PathSymmetry,
+): number | null {
+  const segment = getPathSegment(path, segmentIndex)
+  if (!segment) return null
+  const mirroredStart = symmetry.pairedNodeIndexes[segment.endIndex]
+  const mirroredEnd = symmetry.pairedNodeIndexes[segment.startIndex]
+  if (mirroredStart === undefined || mirroredEnd === undefined) return null
+  for (let index = 0; index < pathSegmentCount(path); index += 1) {
+    const candidate = getPathSegment(path, index)
+    if (candidate?.startIndex === mirroredStart && candidate.endIndex === mirroredEnd) return index
+  }
+  return null
+}
+
+export function bendPathSegmentWithSymmetry(
+  path: PathShape,
+  segmentIndex: number,
+  midpoint: Point,
+  symmetry: PathSymmetry | null,
+): PathShape {
+  if (!symmetry) return bendPathSegment(path, segmentIndex, midpoint)
+  const normalized = normalizePathWithSymmetry(path, symmetry)
+  const pairedSegmentIndex = mirroredSegmentIndex(normalized, segmentIndex, symmetry)
+  if (pairedSegmentIndex === null) return bendPathSegment(normalized, segmentIndex, midpoint)
+  if (pairedSegmentIndex === segmentIndex) {
+    return bendPathSegment(normalized, segmentIndex, { x: symmetry.axisX, y: midpoint.y })
+  }
+  const bent = bendPathSegment(normalized, segmentIndex, midpoint)
+  return bendPathSegment(
+    bent,
+    pairedSegmentIndex,
+    mirrorPointAcrossAxis(midpoint, symmetry.axisX),
+  )
+}
+
+export function removePathNodeWithSymmetry(
+  path: PathShape,
+  nodeIndex: number,
+  symmetry: PathSymmetry | null,
+): PathShape {
+  const pairedIndex = symmetry?.pairedNodeIndexes[nodeIndex] ?? -1
+  const indexes = pairedIndex >= 0 && pairedIndex !== nodeIndex
+    ? [nodeIndex, pairedIndex].sort((left, right) => right - left)
+    : [nodeIndex]
+  const minimum = path.closed ? 3 : 2
+  if (path.nodes.length - indexes.length < minimum) return path
+  const normalized = symmetry ? normalizePathWithSymmetry(path, symmetry) : path
+  const nodes = normalized.nodes.map(clonePathNode)
+  indexes.forEach((index) => nodes.splice(index, 1))
+  return { ...normalized, nodes }
 }
 
 function lerpPoint(start: Point, end: Point, t: number): Point {
@@ -332,6 +579,49 @@ export function splitPathSegment(
   nodes[segment.endIndex]!.inControl = p23
   nodes.splice(insertedIndex, 0, { anchor, inControl: p012, outControl: p123 })
   return { path: { ...path, nodes }, insertedIndex }
+}
+
+export function splitPathSegmentWithSymmetry(
+  path: PathShape,
+  segmentIndex: number,
+  requestedT: number,
+  symmetry: PathSymmetry | null,
+): { path: PathShape; insertedIndex: number } {
+  if (!symmetry) return splitPathSegment(path, segmentIndex, requestedT)
+  const normalized = normalizePathWithSymmetry(path, symmetry)
+  const pairedSegmentIndex = mirroredSegmentIndex(normalized, segmentIndex, symmetry)
+  if (pairedSegmentIndex === null) return splitPathSegment(normalized, segmentIndex, requestedT)
+  const t = Math.min(0.95, Math.max(0.05, requestedT))
+
+  if (pairedSegmentIndex === segmentIndex) {
+    if (Math.abs(t - 0.5) < 0.001) return splitPathSegment(normalized, segmentIndex, 0.5)
+    const firstT = Math.min(t, 1 - t)
+    const secondT = Math.max(t, 1 - t)
+    const first = splitPathSegment(normalized, segmentIndex, firstT)
+    const second = splitPathSegment(
+      first.path,
+      segmentIndex + 1,
+      (secondT - firstT) / (1 - firstT),
+    )
+    return {
+      path: second.path,
+      insertedIndex: t < 0.5 ? first.insertedIndex : second.insertedIndex,
+    }
+  }
+
+  const operations = [
+    { segmentIndex, t, selected: true },
+    { segmentIndex: pairedSegmentIndex, t: 1 - t, selected: false },
+  ].sort((left, right) => right.segmentIndex - left.segmentIndex)
+  let result = normalized
+  let insertedIndex = -1
+  operations.forEach((operation) => {
+    const split = splitPathSegment(result, operation.segmentIndex, operation.t)
+    if (insertedIndex >= split.insertedIndex) insertedIndex += 1
+    if (operation.selected) insertedIndex = split.insertedIndex
+    result = split.path
+  })
+  return { path: result, insertedIndex }
 }
 
 export function findNearestPathPosition(path: PathShape, point: Point): { segmentIndex: number; t: number } {

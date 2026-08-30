@@ -76,32 +76,37 @@ describe('Rasterizer', () => {
     )
   })
 
-  it('对称优化按织片中心线镜像针格并保持左右肩针数一致', () => {
+  it('栅格化忠实读取两侧轮廓，右侧编辑不会再被左侧覆盖', () => {
     const shape: Shape = {
-      id: 'slightly-asymmetric-neck',
+      id: 'editable-right-edge',
       type: 'path',
       closed: true,
       nodes: [
         { anchor: { x: 2, y: 0 } },
         { anchor: { x: 12, y: 0 } },
         { anchor: { x: 12, y: 6 } },
-        { anchor: { x: 9, y: 6 } },
-        { anchor: { x: 8, y: 3 } },
-        { anchor: { x: 5.2, y: 3 } },
-        { anchor: { x: 5, y: 6 } },
         { anchor: { x: 2, y: 6 } },
       ],
     }
-    const upperRows = rasterize(shape, gauge, canvas, {
+    const before = rasterize(shape, gauge, canvas, {
       mode: 'center', symmetryOptimization: true,
-    }).filter((row) => row.segments.length === 2)
+    })[0]!
+    const movedRight = rasterize({
+      ...shape,
+      nodes: shape.type === 'path'
+        ? shape.nodes.map((node, index) => index === 1 || index === 2
+          ? { ...node, anchor: { x: 13, y: node.anchor.y } }
+          : node)
+        : [],
+    }, gauge, canvas, {
+      mode: 'center', symmetryOptimization: true,
+    })[0]!
+    const withoutOptimization = rasterize(shape, gauge, canvas, {
+      mode: 'center', symmetryOptimization: false,
+    })[0]!
 
-    expect(upperRows.length).toBeGreaterThan(0)
-    expect(upperRows.every((row) => {
-      const [left, right] = row.segments
-      return left && right
-        && left.endStitch - left.startStitch === right.endStitch - right.startStitch
-    })).toBe(true)
+    expect(movedRight.stitchCount).toBe(before.stitchCount + 1)
+    expect(before).toEqual(withoutOptimization)
   })
 
   it('开放路径按曲线经过的针格生成针格，闭合路径仍按面积计算', () => {

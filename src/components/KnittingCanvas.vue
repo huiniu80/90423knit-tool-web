@@ -16,13 +16,18 @@ import {
 } from '../core/geometry/boundarySegments'
 import { getShapeBounds, resizeShapeToBounds, translateShape } from '../core/geometry/geometry'
 import {
-  bendPathSegment,
+  bendPathSegmentWithSymmetry,
+  detectPathSymmetry,
   evaluatePathSegment,
   findNearestOpenPathEndpoint,
   findNearestPathPosition,
+  movePathControlWithSymmetry,
+  movePathNodeWithSymmetry,
   pathSegmentCount,
-  splitPathSegment,
+  removePathNodeWithSymmetry,
+  splitPathSegmentWithSymmetry,
 } from '../core/geometry/path'
+import type { PathSymmetry } from '../core/geometry/path'
 import { describeBoundarySegmentShaping } from '../core/knitting/segmentPlanner'
 import { useEditorStore } from '../stores/editor'
 
@@ -32,9 +37,9 @@ type Interaction =
   | { kind: 'move'; start: Point; shape: Shape }
   | { kind: 'resize'; corner: Corner; anchor: Point; shape: Shape }
   | { kind: 'point'; pointIndex: number; shape: PolygonShape }
-  | { kind: 'path-anchor'; nodeIndex: number; shape: PathShape }
-  | { kind: 'path-control'; nodeIndex: number; control: 'inControl' | 'outControl'; shape: PathShape }
-  | { kind: 'path-midpoint'; segmentIndex: number; shape: PathShape }
+  | { kind: 'path-anchor'; nodeIndex: number; shape: PathShape; symmetry: PathSymmetry | null }
+  | { kind: 'path-control'; nodeIndex: number; control: 'inControl' | 'outControl'; shape: PathShape; symmetry: PathSymmetry | null }
+  | { kind: 'path-midpoint'; segmentIndex: number; shape: PathShape; symmetry: PathSymmetry | null }
 
 interface AnnotationDraft {
   key: string
@@ -616,15 +621,26 @@ function onMouseDown(event: KonvaEventObject<MouseEvent>): void {
 
   if (name.startsWith('path-anchor:') && selectedShape.value?.type === 'path') {
     const nodeIndex = Number(name.split(':')[1])
+    const shape = clonePlain(selectedShape.value)
     selectedPathNodeIndex.value = nodeIndex
     selectedPointIndex.value = null
     store.beginShapeMutation()
-    interaction.value = { kind: 'path-anchor', nodeIndex, shape: clonePlain(selectedShape.value) }
+    interaction.value = {
+      kind: 'path-anchor',
+      nodeIndex,
+      shape,
+      symmetry: detectPathSymmetry(
+        shape,
+        gauge.value.stitchWidthCm * 0.55,
+        gauge.value.stitchWidthCm / 2,
+      ),
+    }
     return
   }
   if (name.startsWith('path-control:') && selectedShape.value?.type === 'path') {
     const [, control, nodeIndexText] = name.split(':')
     const nodeIndex = Number(nodeIndexText)
+    const shape = clonePlain(selectedShape.value)
     selectedPathNodeIndex.value = nodeIndex
     selectedPointIndex.value = null
     store.beginShapeMutation()
@@ -632,19 +648,30 @@ function onMouseDown(event: KonvaEventObject<MouseEvent>): void {
       kind: 'path-control',
       nodeIndex,
       control: control as 'inControl' | 'outControl',
-      shape: clonePlain(selectedShape.value),
+      shape,
+      symmetry: detectPathSymmetry(
+        shape,
+        gauge.value.stitchWidthCm * 0.55,
+        gauge.value.stitchWidthCm / 2,
+      ),
     }
     return
   }
   if (name.startsWith('path-midpoint:') && selectedShape.value?.type === 'path') {
     const segmentIndex = Number(name.split(':')[1])
+    const shape = clonePlain(selectedShape.value)
     selectedPathNodeIndex.value = null
     selectedPointIndex.value = null
     store.beginShapeMutation()
     interaction.value = {
       kind: 'path-midpoint',
       segmentIndex,
-      shape: clonePlain(selectedShape.value),
+      shape,
+      symmetry: detectPathSymmetry(
+        shape,
+        gauge.value.stitchWidthCm * 0.55,
+        gauge.value.stitchWidthCm / 2,
+      ),
     }
     return
   }
@@ -725,29 +752,27 @@ function onMouseMove(event: KonvaEventObject<MouseEvent>): void {
     )
     store.updateShapeLive({ ...current.shape, points })
   } else if (current.kind === 'path-anchor') {
-    const nodes = current.shape.nodes.map((node) => ({ ...node }))
-    const node = nodes[current.nodeIndex]
-    if (!node) return
-    const deltaX = world.x - node.anchor.x
-    const deltaY = world.y - node.anchor.y
-    nodes[current.nodeIndex] = {
-      anchor: world,
-      inControl: node.inControl
-        ? { x: node.inControl.x + deltaX, y: node.inControl.y + deltaY }
-        : undefined,
-      outControl: node.outControl
-        ? { x: node.outControl.x + deltaX, y: node.outControl.y + deltaY }
-        : undefined,
-    }
-    store.updateShapeLive({ ...current.shape, nodes })
+    store.updateShapeLive(movePathNodeWithSymmetry(
+      current.shape,
+      current.nodeIndex,
+      world,
+      current.symmetry,
+    ))
   } else if (current.kind === 'path-control') {
-    const nodes = current.shape.nodes.map((node) => ({ ...node }))
-    const node = nodes[current.nodeIndex]
-    if (!node) return
-    nodes[current.nodeIndex] = { ...node, [current.control]: world }
-    store.updateShapeLive({ ...current.shape, nodes })
+    store.updateShapeLive(movePathControlWithSymmetry(
+      current.shape,
+      current.nodeIndex,
+      current.control,
+      world,
+      current.symmetry,
+    ))
   } else if (current.kind === 'path-midpoint') {
-    store.updateShapeLive(bendPathSegment(current.shape, current.segmentIndex, world))
+    store.updateShapeLive(bendPathSegmentWithSymmetry(
+      current.shape,
+      current.segmentIndex,
+      world,
+      current.symmetry,
+    ))
   }
 }
 
@@ -852,7 +877,17 @@ function onDoubleClick(event: KonvaEventObject<MouseEvent>): void {
     const nearest = name.startsWith('path-midpoint:')
       ? { segmentIndex: Number(name.split(':')[1]), t: 0.5 }
       : findNearestPathPosition(selectedShape.value, world)
-    const result = splitPathSegment(selectedShape.value, nearest.segmentIndex, nearest.t)
+    const symmetry = detectPathSymmetry(
+      selectedShape.value,
+      gauge.value.stitchWidthCm * 0.55,
+      gauge.value.stitchWidthCm / 2,
+    )
+    const result = splitPathSegmentWithSymmetry(
+      selectedShape.value,
+      nearest.segmentIndex,
+      nearest.t,
+      symmetry,
+    )
     if (result.insertedIndex !== -1) {
       store.replaceShape(result.path)
       selectedPathNodeIndex.value = result.insertedIndex
@@ -913,8 +948,16 @@ function onKeyDown(event: KeyboardEvent): void {
         store.deleteSelected()
       } else {
         const shape = clonePlain(selectedShape.value)
-        shape.nodes.splice(selectedPathNodeIndex.value, 1)
-        store.replaceShape(shape)
+        const symmetry = detectPathSymmetry(
+          shape,
+          gauge.value.stitchWidthCm * 0.55,
+          gauge.value.stitchWidthCm / 2,
+        )
+        store.replaceShape(removePathNodeWithSymmetry(
+          shape,
+          selectedPathNodeIndex.value,
+          symmetry,
+        ))
       }
       selectedPathNodeIndex.value = null
     } else if (

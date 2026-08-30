@@ -2,10 +2,16 @@ import { describe, expect, it } from 'vitest'
 import { getHorizontalIntervals, getShapeBounds, resizeShapeToBounds } from './geometry'
 import {
   bendPathSegment,
+  bendPathSegmentWithSymmetry,
+  detectPathSymmetry,
   evaluatePathSegment,
   findNearestOpenPathEndpoint,
   flattenPath,
+  movePathControlWithSymmetry,
+  movePathNodeWithSymmetry,
+  removePathNodeWithSymmetry,
   splitPathSegment,
+  splitPathSegmentWithSymmetry,
 } from './path'
 import type { PathShape, Shape } from './shape.types'
 
@@ -207,4 +213,86 @@ describe('Geometry Engine', () => {
     expect(resized.nodes[0]?.outControl).toEqual({ x: 12, y: 28 })
     expect(resized.nodes[1]?.anchor).toEqual({ x: 18, y: 20 })
   })
+
+  it('对称闭合路径拖动任一侧锚点时同步镜像另一侧', () => {
+    const path = symmetricGarmentPath()
+    const symmetry = detectPathSymmetry(path, 0.01)
+    expect(symmetry).not.toBeNull()
+
+    const moved = movePathNodeWithSymmetry(path, 2, { x: 9, y: 6.5 }, symmetry)
+    expect(moved.nodes[2]?.anchor).toEqual({ x: 9, y: 6.5 })
+    expect(moved.nodes[8]?.anchor).toEqual({ x: 1, y: 6.5 })
+    expect(symmetry?.axisX).toBe(5)
+  })
+
+  it('近似对称路径首次联动时平均校正全部节点并吸附半针中心轴', () => {
+    const path = symmetricGarmentPath()
+    path.nodes[8]!.anchor.x = 0.2
+    path.nodes[7]!.anchor.x = 2.1
+    const symmetry = detectPathSymmetry(path, 0.35, 0.5)
+    expect(symmetry?.axisX).toBe(5)
+
+    const moved = movePathNodeWithSymmetry(path, 2, { x: 9.5, y: 6 }, symmetry)
+    expect(moved.nodes[8]?.anchor).toEqual({ x: 0.5, y: 6 })
+    expect(moved.nodes[3]?.anchor.x).toBe(7.95)
+    expect(moved.nodes[7]?.anchor.x).toBe(2.05)
+  })
+
+  it('对称路径的控制柄和配对曲线保持镜像方向', () => {
+    const path = symmetricGarmentPath()
+    const symmetry = detectPathSymmetry(path, 0.01)
+    const controlled = movePathControlWithSymmetry(
+      path,
+      3,
+      'outControl',
+      { x: 7, y: 9 },
+      symmetry,
+    )
+    expect(controlled.nodes[7]?.inControl).toEqual({ x: 3, y: 9 })
+
+    const bent = bendPathSegmentWithSymmetry(path, 2, { x: 9, y: 7.5 }, symmetry)
+    expect(evaluatePathSegment(bent, 2, 0.5)).toEqual({ x: 9, y: 7.5 })
+    expect(evaluatePathSegment(bent, 7, 0.5)).toEqual({ x: 1, y: 7.5 })
+  })
+
+  it('对称路径插入和删除节点时成对处理且仍可重新识别', () => {
+    const path = symmetricGarmentPath()
+    const symmetry = detectPathSymmetry(path, 0.01)
+    const split = splitPathSegmentWithSymmetry(path, 2, 0.4, symmetry)
+    expect(split.path.nodes).toHaveLength(path.nodes.length + 2)
+    expect(detectPathSymmetry(split.path, 0.01)).not.toBeNull()
+
+    const removed = removePathNodeWithSymmetry(path, 3, symmetry)
+    expect(removed.nodes).toHaveLength(path.nodes.length - 2)
+    expect(detectPathSymmetry(removed, 0.01)).not.toBeNull()
+  })
+
+  it('不对称路径保持自由编辑，不会自动覆盖另一侧', () => {
+    const path = symmetricGarmentPath()
+    path.nodes[8]!.anchor.x = 0.8
+    const symmetry = detectPathSymmetry(path, 0.01)
+    expect(symmetry).toBeNull()
+
+    const moved = movePathNodeWithSymmetry(path, 2, { x: 9, y: 6 }, symmetry)
+    expect(moved.nodes[8]?.anchor).toEqual({ x: 0.8, y: 6 })
+  })
 })
+
+function symmetricGarmentPath(): PathShape {
+  return {
+    id: 'symmetric-garment',
+    type: 'path',
+    closed: true,
+    nodes: [
+      { anchor: { x: 0, y: 0 } },
+      { anchor: { x: 10, y: 0 } },
+      { anchor: { x: 10, y: 6 } },
+      { anchor: { x: 8, y: 8 } },
+      { anchor: { x: 6, y: 8 } },
+      { anchor: { x: 5, y: 6 } },
+      { anchor: { x: 4, y: 8 } },
+      { anchor: { x: 2, y: 8 } },
+      { anchor: { x: 0, y: 6 } },
+    ],
+  }
+}

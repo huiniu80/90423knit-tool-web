@@ -2,12 +2,19 @@
 import { computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { getShapeBounds, resizeShapeToBounds } from '../core/geometry/geometry'
+import { detectPathSymmetry } from '../core/geometry/path'
 import type { Bounds } from '../core/geometry/shape.types'
 import { useEditorStore } from '../stores/editor'
 
 const store = useEditorStore()
-const { selectedShape } = storeToRefs(store)
+const { gauge, selectedShape } = storeToRefs(store)
 const bounds = computed(() => selectedShape.value ? getShapeBounds(selectedShape.value) : null)
+const hasPathSymmetry = computed(() => selectedShape.value?.type === 'path'
+  && Boolean(detectPathSymmetry(
+    selectedShape.value,
+    gauge.value.stitchWidthCm * 0.55,
+    gauge.value.stitchWidthCm / 2,
+  )))
 
 const typeLabels = {
   rectangle: '矩形',
@@ -64,6 +71,7 @@ function togglePathClosed(): void {
       <div v-if="selectedShape.type === 'path'" class="path-property-block">
         <div class="path-status-row">
           <span>{{ selectedShape.nodes.length }} 个锚点</span>
+          <b v-if="hasPathSymmetry" class="symmetry-status">左右对称联动</b>
           <button type="button" :disabled="!selectedShape.closed && selectedShape.nodes.length < 3"
             @click="togglePathClosed">
             {{ selectedShape.closed ? '打开路径' : '闭合路径' }}
@@ -71,7 +79,9 @@ function togglePathClosed(): void {
         </div>
         <p class="property-tip">
           {{ selectedShape.closed
-            ? '闭合路径会参与针格和针法计算。拖动橙色中点弯曲边，绿色手柄可精调。'
+            ? hasPathSymmetry
+              ? '已建立左右节点配对。拖动任一侧会同步镜像，针法在跨过针格后实时更新。'
+              : '闭合路径会参与针格和针法计算。当前轮廓未识别为对称结构，左右保持独立编辑。'
             : '开放路径会按曲线经过的针格生成独立指令。拖动橙色中点可调整弧线。' }}
         </p>
       </div>

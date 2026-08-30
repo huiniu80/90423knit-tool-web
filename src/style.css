@@ -142,6 +142,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .empty-property p { margin: 8px 0 0; font-size: 10px; line-height: 1.65; }
 .path-property-block { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .path-status-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #676d67; font-size: 10px; }
+.symmetry-status { margin-left: auto; padding: 3px 6px; border-radius: 999px; color: #287d72; background: #e2efea; font-size: 8px; font-weight: 600; white-space: nowrap; }
 .path-status-row button { padding: 6px 10px; border: 1px solid #b9c9c3; border-radius: 6px; color: #287d72; background: #edf4f1; font-size: 9px; }
 .path-status-row button:hover:not(:disabled) { background: #dfece7; }
 .path-status-row button:disabled { cursor: not-allowed; opacity: .45; }
