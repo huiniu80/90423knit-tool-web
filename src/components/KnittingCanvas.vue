@@ -62,6 +62,13 @@ interface ShapingAnnotation extends Omit<AnnotationDraft, 'preferredY'> {
   connectorPoints: number[]
 }
 
+interface TouchGesture {
+  startCenter: Point
+  startDistance: number
+  startZoom: number
+  startPan: Point
+}
+
 const store = useEditorStore()
 const {
   fabric,
@@ -93,6 +100,9 @@ const highlightedAnnotationKey = ref<string | null>(null)
 const annotationHovered = ref(false)
 const canvasBackgroundHovered = ref(false)
 let resizeObserver: ResizeObserver | null = null
+let activePenPointerId: number | null = null
+let touchGesture: TouchGesture | null = null
+const touchPointers = new Map<number, Point>()
 
 const canvasBoundaryPadding = 24
 const annotationWidth = 224
@@ -561,10 +571,64 @@ function beginResize(shape: Shape, corner: Corner): void {
   interaction.value = { kind: 'resize', corner, anchor: opposite[corner], shape: clonePlain(shape) }
 }
 
+function firstTwoTouchPoints(): [Point, Point] | null {
+  const points = [...touchPointers.values()]
+  return points.length >= 2 && points[0] && points[1] ? [points[0], points[1]] : null
+}
+
+function touchCenter(first: Point, second: Point): Point {
+  return { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 }
+}
+
+function beginTouchGesture(): void {
+  const points = firstTwoTouchPoints()
+  if (!points) return
+  const [first, second] = points
+  touchGesture = {
+    startCenter: touchCenter(first, second),
+    startDistance: Math.max(1, Math.hypot(second.x - first.x, second.y - first.y)),
+    startZoom: zoom.value,
+    startPan: { ...pan.value },
+  }
+  interaction.value = null
+}
+
+function updateTouchGesture(): void {
+  const points = firstTwoTouchPoints()
+  if (!touchGesture || !points) return
+  const [first, second] = points
+  const center = touchCenter(first, second)
+  const distance = Math.max(1, Math.hypot(second.x - first.x, second.y - first.y))
+  const nextZoom = Math.min(
+    60,
+    Math.max(5, touchGesture.startZoom * distance / touchGesture.startDistance),
+  )
+  const localX = (touchGesture.startCenter.x - touchGesture.startPan.x) / touchGesture.startZoom
+  const localY = (touchGesture.startCenter.y - touchGesture.startPan.y) / touchGesture.startZoom
+  zoom.value = nextZoom
+  pan.value = clampPan({
+    x: center.x - localX * nextZoom,
+    y: center.y - localY * nextZoom,
+  })
+}
+
 function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
   host.value?.focus()
   const pointer = pointerFromEvent(event)
   if (!pointer) return
+
+  if (event.evt.pointerType === 'touch') {
+    if (activePenPointerId !== null) return
+    event.evt.preventDefault()
+    touchPointers.set(event.evt.pointerId, pointer)
+    if (touchPointers.size >= 2) {
+      beginTouchGesture()
+    } else {
+      interaction.value = { kind: 'pan', start: pointer, origin: { ...pan.value } }
+    }
+    return
+  }
+  if (event.evt.pointerType === 'pen') activePenPointerId = event.evt.pointerId
 
   const name = targetName(event)
   const isPrimaryCanvasDrag = event.evt.button === 0
@@ -701,6 +765,15 @@ function onPointerMove(event: KonvaEventObject<PointerEvent>): void {
   const pointer = pointerFromEvent(event)
   const current = interaction.value
   if (!pointer) return
+  if (event.evt.pointerType === 'touch') {
+    if (!touchPointers.has(event.evt.pointerId)) return
+    event.evt.preventDefault()
+    touchPointers.set(event.evt.pointerId, pointer)
+    if (touchGesture) {
+      updateTouchGesture()
+      return
+    }
+  }
   const name = targetName(event)
   const annotationTarget = annotationCardTarget(name)
   canvasBackgroundHovered.value = isCanvasBackground(name)
@@ -774,15 +847,41 @@ function endInteraction(): void {
   interaction.value = null
 }
 
-function onPointerLeave(): void {
+function onPointerEnd(event: KonvaEventObject<PointerEvent>): void {
+  if (event.evt.pointerType === 'pen' && event.evt.pointerId === activePenPointerId) {
+    activePenPointerId = null
+  }
+  if (event.evt.pointerType !== 'touch') {
+    endInteraction()
+    return
+  }
+
+  touchPointers.delete(event.evt.pointerId)
+  if (touchGesture) {
+    touchGesture = null
+    if (touchPointers.size >= 2) {
+      beginTouchGesture()
+    } else {
+      const remaining = touchPointers.values().next().value as Point | undefined
+      interaction.value = remaining
+        ? { kind: 'pan', start: remaining, origin: { ...pan.value } }
+        : null
+    }
+    return
+  }
+  endInteraction()
+}
+
+function onPointerLeave(event: KonvaEventObject<PointerEvent>): void {
   pathPointer.value = null
   annotationHovered.value = false
   canvasBackgroundHovered.value = false
   highlightedAnnotationKey.value = null
-  endInteraction()
+  onPointerEnd(event)
 }
 
 function onStagePointerClick(event: KonvaEventObject<PointerEvent>): void {
+  if (event.evt.pointerType === 'touch') return
   if (annotationCardTarget(targetName(event))) return
   if (activeTool.value !== 'polygon' && activeTool.value !== 'path') return
   const pointer = pointerFromEvent(event)
@@ -857,6 +956,7 @@ function nearestEdgeInsertion(shape: PolygonShape, point: Point): number {
 }
 
 function onPointerDoubleClick(event: KonvaEventObject<PointerEvent>): void {
+  if (event.evt.pointerType === 'touch') return
   if (activeTool.value !== 'select' || !selectedShape.value) return
   const name = targetName(event)
   const pointer = pointerFromEvent(event)
@@ -1089,8 +1189,8 @@ defineExpose({ fitCanvas, exportCanvas })
 <template>
   <div ref="host" class="knitting-canvas" tabindex="0" :style="{ cursor: stageCursor }">
     <v-stage ref="stageRef" :config="{ width: stageSize.width, height: stageSize.height }"
-      @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="endInteraction"
-      @pointercancel="onPointerLeave" @pointerleave="onPointerLeave"
+      @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerEnd"
+      @pointercancel="onPointerEnd" @pointerleave="onPointerLeave"
       @pointerclick="onStagePointerClick" @pointerdblclick="onPointerDoubleClick" @wheel="onWheel">
       <v-layer>
         <v-group :config="{ x: pan.x, y: pan.y }">
