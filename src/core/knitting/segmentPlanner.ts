@@ -272,7 +272,8 @@ export function describeBoundarySegmentShaping(
   const markers = numberedSteps.flatMap((step) => {
     const row = rows.find((item) => item.rowIndex === step.startSourceRowIndex)
     const point = row ? edgePoint(row, step.edge, gauge.stitchWidthCm) : null
-    return point ? [{ label: stepNumberLabel(step.order), point }] : []
+    // 画布圆点本身已经提供了圆形语义，使用普通数字可避免“圆中套圆”影响辨认。
+    return point ? [{ label: String(step.order), point }] : []
   })
 
   return {

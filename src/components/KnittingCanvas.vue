@@ -54,7 +54,15 @@ interface AnnotationDraft {
   width: number
   height: number
   lines: string[]
-  markers: Array<{ label: string; x: number; y: number }>
+  markers: CanvasMarker[]
+}
+
+interface CanvasMarker {
+  label: string
+  x: number
+  y: number
+  anchorX: number
+  anchorY: number
 }
 
 interface AnnotationModel {
@@ -127,6 +135,7 @@ const annotationPaddingY = 8
 const annotationViewportMargin = 14
 const annotationCollisionGap = 8
 const annotationFabricGap = 38
+const markerCollisionGap = 4
 
 function clonePlain<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -212,6 +221,54 @@ function layoutAnnotationSide(
   if (downwardShift) placed.forEach((item) => (item.y += downwardShift))
 
   return placed
+}
+
+function markerRadius(label: string): number {
+  return label.length > 1 ? 14 : 12
+}
+
+function markerFontSize(label: string): number {
+  return label.length > 1 ? 11 : 13
+}
+
+function layoutCanvasMarkers(
+  markers: Array<{ label: string; x: number; y: number }>,
+  side: 'left' | 'right',
+): CanvasMarker[] {
+  const placed: CanvasMarker[] = []
+  const outward = side === 'left' ? -1 : 1
+  const ordered = [...markers].sort((left, right) => left.y - right.y || left.x - right.x)
+
+  for (const marker of ordered) {
+    const radius = markerRadius(marker.label)
+    const step = radius * 2 + markerCollisionGap
+    const candidates = [{ x: marker.x, y: marker.y }]
+    for (let level = 1; level <= markers.length + 1; level += 1) {
+      const x = marker.x + outward * Math.min(16, level * 8)
+      candidates.push(
+        { x, y: marker.y - step * level },
+        { x, y: marker.y + step * level },
+      )
+    }
+    const position = candidates.find((candidate) => placed.every((other) =>
+      Math.hypot(candidate.x - other.x, candidate.y - other.y)
+        >= radius + markerRadius(other.label) + markerCollisionGap,
+    )) ?? candidates.at(-1)!
+
+    placed.push({
+      ...marker,
+      x: position.x,
+      y: position.y,
+      anchorX: marker.x,
+      anchorY: marker.y,
+    })
+  }
+
+  return placed
+}
+
+function markerWasDisplaced(marker: CanvasMarker): boolean {
+  return Math.hypot(marker.x - marker.anchorX, marker.y - marker.anchorY) > 1
 }
 
 function connectorPoints(annotation: AnnotationDraft & { y: number }): number[] {
@@ -329,11 +386,11 @@ const shapingAnnotations = computed<ShapingAnnotation[]>(() => {
         ? annotationViewportMargin
         : stageSize.value.width - annotationViewportMargin - annotationWidth,
       preferredY: anchorY - model.height / 2,
-      markers: model.markers.map((marker) => ({
+      markers: layoutCanvasMarkers(model.markers.map((marker) => ({
         label: marker.label,
         x: pan.value.x + marker.point.x * zoom.value,
         y: pan.value.y + (fabric.value.heightCm - marker.point.y) * zoom.value,
-      })),
+      })), model.side),
     }
   })
 
@@ -1358,18 +1415,27 @@ defineExpose({ fitCanvas, exportCanvas })
           <template v-for="annotation in shapingAnnotations" :key="`${annotation.key}-markers`">
             <v-group v-for="(marker, markerIndex) in annotation.markers"
               :key="`${annotation.key}-marker-${markerIndex}`"
-              :config="{ x: marker.x, y: marker.y, listening: false }">
+              :config="{ listening: false }">
+              <v-line v-if="markerWasDisplaced(marker)" :config="{
+                points: [marker.anchorX, marker.anchorY, marker.x, marker.y],
+                stroke: annotationIsHighlighted(annotation.key) ? '#b24631' : '#176f61',
+                strokeWidth: 1.4, lineCap: 'round', listening: false,
+              }" />
               <v-circle :config="{
-                radius: annotationIsHighlighted(annotation.key) ? 10 : 9,
-                fill: annotationIsHighlighted(annotation.key) ? '#b24631' : '#287d72',
+                x: marker.x, y: marker.y, radius: markerRadius(marker.label),
+                fill: annotationIsHighlighted(annotation.key) ? '#b24631' : '#176f61',
                 stroke: '#fffdf8', strokeWidth: 2,
-                shadowColor: '#263d36', shadowBlur: 4, shadowOpacity: 0.2,
+                shadowColor: '#263d36', shadowBlur: 5, shadowOpacity: 0.24,
               }" />
               <v-text :config="{
-                x: -8, y: -7, width: 16, height: 14, text: marker.label,
+                x: marker.x - markerRadius(marker.label),
+                y: marker.y - markerRadius(marker.label),
+                width: markerRadius(marker.label) * 2,
+                height: markerRadius(marker.label) * 2,
+                text: marker.label,
                 align: 'center', verticalAlign: 'middle', fill: '#fffdf8',
                 fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                fontSize: 10, fontStyle: 'bold', listening: false,
+                fontSize: markerFontSize(marker.label), fontStyle: 'bold', listening: false,
               }" />
             </v-group>
           </template>
