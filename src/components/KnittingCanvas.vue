@@ -1174,11 +1174,30 @@ defineExpose({ fitCanvas })
               fill: annotationIsHighlighted(annotation.key) ? '#b24631' : '#287d72',
               cornerRadius: [0, 2, 2, 0], listening: false,
             }" />
+            <v-circle :config="{
+              x: annotationPaddingX + 7,
+              y: annotationPaddingY + annotationLineHeight / 2,
+              radius: 7,
+              fill: annotationIsHighlighted(annotation.key) ? '#b24631' : '#263d36',
+              stroke: '#fffdf8', strokeWidth: 1.4,
+              listening: false,
+            }" />
+            <v-text :config="{
+              x: annotationPaddingX + 1,
+              y: annotationPaddingY + 2,
+              width: 12,
+              height: annotationLineHeight - 4,
+              text: `${annotation.segmentIndex + 1}`,
+              align: 'center', verticalAlign: 'middle',
+              fill: '#fffdf8',
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+              fontSize: 8, fontStyle: 'bold', listening: false,
+            }" />
             <v-text v-for="(line, lineIndex) in annotation.lines"
               :key="`${annotation.key}-line-${lineIndex}`" :config="{
-                x: annotationPaddingX,
+                x: annotationPaddingX + (lineIndex === 0 ? 20 : 0),
                 y: annotationPaddingY + lineIndex * annotationLineHeight,
-                width: annotation.width - annotationPaddingX * 2,
+                width: annotation.width - annotationPaddingX * 2 - (lineIndex === 0 ? 20 : 0),
                 height: annotationLineHeight,
                 text: line,
                 fill: annotationLineColor(line, lineIndex),
