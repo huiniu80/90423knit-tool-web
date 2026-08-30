@@ -248,8 +248,17 @@ function drawPreview(): void {
 function selectFromPreview(event: MouseEvent): void {
   if (!analysis.value || !previewCanvas.value || previewMode.value === 'original') return
   const rect = previewCanvas.value.getBoundingClientRect()
-  const x = (event.clientX - rect.left) * previewCanvas.value.width / rect.width
-  const y = (event.clientY - rect.top) * previewCanvas.value.height / rect.height
+  const scale = Math.min(
+    rect.width / previewCanvas.value.width,
+    rect.height / previewCanvas.value.height,
+  )
+  const renderedWidth = previewCanvas.value.width * scale
+  const renderedHeight = previewCanvas.value.height * scale
+  const offsetX = (rect.width - renderedWidth) / 2
+  const offsetY = (rect.height - renderedHeight) / 2
+  const x = (event.clientX - rect.left - offsetX) / scale
+  const y = (event.clientY - rect.top - offsetY) / scale
+  if (x < 0 || y < 0 || x > previewCanvas.value.width || y > previewCanvas.value.height) return
   const matches = analysis.value.candidates.filter((candidate) =>
     x >= candidate.bounds.x && x <= candidate.bounds.x + candidate.bounds.width
     && y >= candidate.bounds.y && y <= candidate.bounds.y + candidate.bounds.height,
@@ -423,7 +432,7 @@ onBeforeUnmount(() => {
 .preview-toolbar { height: 45px; padding: 7px 10px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #e0dacf; }
 .preview-toolbar small { color: #918a80; font-size: 9px; }
 .preview-stage { position: relative; height: 390px; display: grid; place-items: center; overflow: hidden; background-color: #e9e4db; background-image: linear-gradient(45deg,#ddd7cd 25%,transparent 25%),linear-gradient(-45deg,#ddd7cd 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#ddd7cd 75%),linear-gradient(-45deg,transparent 75%,#ddd7cd 75%); background-size: 16px 16px; background-position: 0 0,0 8px,8px -8px,-8px 0; }
-.preview-stage canvas { max-width: 100%; max-height: 100%; display: block; object-fit: contain; }
+.preview-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; min-width: 0; min-height: 0; display: block; object-fit: contain; }
 .preview-stage.selectable canvas { cursor: crosshair; }
 .processing-cover { position: absolute; inset: 0; display: grid; place-items: center; color: white; background: rgba(31,49,42,.55); font-size: 12px; }
 .preview-legend { height: 32px; margin: 0; padding: 8px 11px; color: #77736c; border-top: 1px solid #e0dacf; font-size: 9px; }
