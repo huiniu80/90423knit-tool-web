@@ -128,13 +128,13 @@ let interactionFrameId: number | null = null
 let pendingInteractionPointer: Point | null = null
 
 const canvasBoundaryPadding = 24
-const annotationWidth = 224
-const annotationLineHeight = 15
-const annotationPaddingX = 10
-const annotationPaddingY = 8
+const annotationWidth = 264
+const annotationLineHeight = 18
+const annotationPaddingX = 12
+const annotationPaddingY = 10
 const annotationViewportMargin = 14
-const annotationCollisionGap = 8
-const annotationFabricGap = 38
+const annotationCollisionGap = 10
+const annotationFabricGap = 42
 const markerCollisionGap = 4
 
 function clonePlain<T>(value: T): T {
@@ -1442,17 +1442,17 @@ defineExpose({ fitCanvas, exportCanvas })
           <v-group v-for="annotation in shapingAnnotations" :key="annotation.key"
             :config="{ x: annotation.anchorX, y: annotation.anchorY, listening: false }">
             <v-rect :config="{
-              x: -11, y: -11, width: 22, height: 22,
+              x: -12, y: -12, width: 24, height: 24,
               fill: annotationIsHighlighted(annotation.key) ? '#b24631' : '#263d36',
-              stroke: '#fffdf8', strokeWidth: 2, cornerRadius: 11,
+              stroke: '#fffdf8', strokeWidth: 2, cornerRadius: 12,
               shadowColor: '#263d36', shadowBlur: 5, shadowOpacity: 0.2,
               shadowOffsetY: 2, listening: false,
             }" />
             <v-text :config="{
-              x: -9, y: -7, width: 18, height: 14,
+              x: -10, y: -8, width: 20, height: 16,
               text: `${annotation.segmentIndex + 1}`, align: 'center', verticalAlign: 'middle',
               fill: '#fffdf8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-              fontSize: 9, fontStyle: 'bold', listening: false,
+              fontSize: 10, fontStyle: 'bold', listening: false,
             }" />
           </v-group>
 
@@ -1470,28 +1470,28 @@ defineExpose({ fitCanvas, exportCanvas })
               shadowOpacity: 0.12, shadowOffsetY: 2, listening: activeTool !== 'path',
             }" />
             <v-rect :config="{
-              x: 0, y: 8, width: 3, height: annotation.height - 16,
+              x: 0, y: 9, width: 4, height: annotation.height - 18,
               fill: annotationIsHighlighted(annotation.key) ? '#b24631' : '#287d72',
               cornerRadius: [0, 2, 2, 0], listening: false,
             }" />
             <v-circle :config="{
               x: annotationPaddingX + 7,
               y: annotationPaddingY + annotationLineHeight / 2,
-              radius: 7,
+              radius: 8,
               fill: annotationIsHighlighted(annotation.key) ? '#b24631' : '#263d36',
               stroke: '#fffdf8', strokeWidth: 1.4,
               listening: false,
             }" />
             <v-text :config="{
-              x: annotationPaddingX + 1,
-              y: annotationPaddingY + 2,
-              width: 12,
-              height: annotationLineHeight - 4,
+              x: annotationPaddingX,
+              y: annotationPaddingY + 1,
+              width: 14,
+              height: annotationLineHeight - 2,
               text: `${annotation.segmentIndex + 1}`,
               align: 'center', verticalAlign: 'middle',
               fill: '#fffdf8',
               fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-              fontSize: 8, fontStyle: 'bold', listening: false,
+              fontSize: 9, fontStyle: 'bold', listening: false,
             }" />
             <v-text v-for="(line, lineIndex) in annotation.lines"
               :key="`${annotation.key}-line-${lineIndex}`" :config="{
@@ -1502,7 +1502,7 @@ defineExpose({ fitCanvas, exportCanvas })
                 text: line,
                 fill: annotationLineColor(line, lineIndex),
                 fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                fontSize: lineIndex === 0 ? 9.5 : 10,
+                fontSize: lineIndex === 0 ? 11 : 12,
                 fontStyle: annotationLineIsBold(line, lineIndex) ? 'bold' : 'normal',
                 verticalAlign: 'middle', listening: false,
               }" />

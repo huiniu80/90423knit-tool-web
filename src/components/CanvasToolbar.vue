@@ -4,7 +4,8 @@ import { storeToRefs } from 'pinia'
 import { useEditorStore } from '../stores/editor'
 import type { EditorTool } from '../stores/editor.types'
 
-const emit = defineEmits<{ fit: []; export: [] }>()
+defineProps<{ sidebarExpanded: boolean }>()
+const emit = defineEmits<{ fit: []; export: []; toggleSidebar: [] }>()
 const store = useEditorStore()
 const {
   activeTool,
@@ -45,6 +46,18 @@ function changeZoom(delta: number): void {
 
 <template>
   <div class="canvas-toolbar" role="toolbar" aria-label="画布工具">
+    <button class="sidebar-toggle-button" type="button" aria-controls="editor-sidebar"
+      :aria-expanded="sidebarExpanded" :title="sidebarExpanded ? '收起参数栏' : '展开参数栏'"
+      :aria-label="sidebarExpanded ? '收起参数栏' : '展开参数栏'" @click="emit('toggleSidebar')">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="3.5" y="4" width="17" height="16" rx="2" />
+        <path d="M9 4v16" />
+        <path v-if="sidebarExpanded" d="m6.5 9-2.5 3 2.5 3" />
+        <path v-else d="m5 9 2.5 3L5 15" />
+      </svg>
+      <small>参数</small>
+    </button>
+    <div class="toolbar-divider" />
     <div class="tool-group shape-tools">
       <button v-for="tool in tools" :key="tool.id" type="button"
         :class="['tool-button', { active: activeTool === tool.id }]"
