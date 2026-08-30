@@ -12,7 +12,9 @@ const canvasRef = ref<InstanceType<typeof KnittingCanvas> | null>(null)
   <div class="app-shell">
     <header class="app-header">
       <div class="brand-lockup">
-        <span class="brand-mark">◒</span>
+        <span class="brand-mark" aria-hidden="true">
+          <img src="/logo.png" alt="" />
+        </span>
         <div>
           <h1>编织图形转针法</h1>
           <p>Knitting Shape Planner</p>

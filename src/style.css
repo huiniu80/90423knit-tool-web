@@ -49,16 +49,18 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 .brand-lockup { display: flex; align-items: center; gap: 12px; min-width: 260px; }
 .brand-mark {
-  width: 40px;
-  height: 40px;
+  width: 46px;
+  height: 46px;
   display: grid;
   place-items: center;
-  font-size: 29px;
-  color: #f2b453;
-  border: 1px solid rgba(255,255,255,.25);
+  flex: 0 0 auto;
+  padding: 4px;
+  border: 1px solid rgba(255,255,255,.42);
   border-radius: 12px;
-  background: rgba(255,255,255,.06);
+  background: #fffdf8;
+  box-shadow: 0 3px 10px rgba(16, 34, 28, .24);
 }
+.brand-mark img { width: 100%; height: 100%; display: block; object-fit: contain; }
 .brand-lockup h1 { margin: 0; font-size: 16px; letter-spacing: .08em; font-weight: 680; }
 .brand-lockup p { margin: 2px 0 0; color: #aebbb5; font-size: 10px; letter-spacing: .18em; text-transform: uppercase; }
 .editor-main {
