@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { KonvaEventObject } from 'konva/lib/Node'
+import type { Stage } from 'konva/lib/Stage'
 import type {
   Bounds,
   PathShape,
@@ -80,6 +81,7 @@ const {
 } = storeToRefs(store)
 
 const host = ref<HTMLDivElement | null>(null)
+const stageRef = ref<{ getNode: () => Stage } | null>(null)
 const stageSize = ref({ width: 900, height: 600 })
 const pan = ref<Point>({ x: 60, y: 40 })
 const interaction = ref<Interaction | null>(null)
@@ -1009,6 +1011,37 @@ function fitCanvas(): void {
   }
 }
 
+function exportCanvas(): void {
+  const stage = stageRef.value?.getNode()
+  if (!stage) return
+
+  const pixelRatio = 2
+  const renderedCanvas = stage.toCanvas({ pixelRatio })
+  const exportedCanvas = document.createElement('canvas')
+  exportedCanvas.width = renderedCanvas.width
+  exportedCanvas.height = renderedCanvas.height
+  const context = exportedCanvas.getContext('2d')
+  if (!context) return
+
+  context.fillStyle = '#e8e3da'
+  context.fillRect(0, 0, exportedCanvas.width, exportedCanvas.height)
+  context.drawImage(renderedCanvas, 0, 0)
+
+  const now = new Date()
+  const timestamp = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+    '-',
+    String(now.getHours()).padStart(2, '0'),
+    String(now.getMinutes()).padStart(2, '0'),
+  ].join('')
+  const downloadLink = document.createElement('a')
+  downloadLink.download = `编织图解-${timestamp}.png`
+  downloadLink.href = exportedCanvas.toDataURL('image/png')
+  downloadLink.click()
+}
+
 onMounted(() => {
   if (!host.value) return
   resizeObserver = new ResizeObserver(([entry]) => {
@@ -1050,12 +1083,12 @@ watch(() => shapes.value.map((shape) => shape.id), (shapeIds) => {
     selectedGridAnnotationSegment.value = null
   }
 })
-defineExpose({ fitCanvas })
+defineExpose({ fitCanvas, exportCanvas })
 </script>
 
 <template>
   <div ref="host" class="knitting-canvas" tabindex="0" :style="{ cursor: stageCursor }">
-    <v-stage :config="{ width: stageSize.width, height: stageSize.height }"
+    <v-stage ref="stageRef" :config="{ width: stageSize.width, height: stageSize.height }"
       @mousedown="onMouseDown" @mousemove="onMouseMove" @mouseup="endInteraction"
       @mouseleave="onMouseLeave" @click="onStageClick" @dblclick="onDoubleClick" @wheel="onWheel">
       <v-layer>

@@ -27,7 +27,7 @@ const canvasRef = ref<InstanceType<typeof KnittingCanvas> | null>(null)
       </aside>
 
       <section class="workspace">
-        <CanvasToolbar @fit="canvasRef?.fitCanvas()" />
+        <CanvasToolbar @fit="canvasRef?.fitCanvas()" @export="canvasRef?.exportCanvas()" />
         <KnittingCanvas ref="canvasRef" />
       </section>
     </main>

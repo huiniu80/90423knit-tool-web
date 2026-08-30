@@ -4,7 +4,7 @@ import { storeToRefs } from 'pinia'
 import { useEditorStore } from '../stores/editor'
 import type { EditorTool } from '../stores/editor.types'
 
-const emit = defineEmits<{ fit: [] }>()
+const emit = defineEmits<{ fit: []; export: [] }>()
 const store = useEditorStore()
 const {
   activeTool,
@@ -98,5 +98,14 @@ function changeZoom(delta: number): void {
       <button type="button" @click="changeZoom(2)">+</button>
       <button class="fit-button" type="button" @click="emit('fit')">适应</button>
     </div>
+    <button class="export-button" type="button" title="将当前画布导出为 PNG 图片"
+      @click="emit('export')">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 3v12" />
+        <path d="m7 10 5 5 5-5" />
+        <path d="M5 19h14" />
+      </svg>
+      <span>导出图片</span>
+    </button>
   </div>
 </template>
