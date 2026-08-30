@@ -187,6 +187,45 @@ describe('Editor Store', () => {
     expect(store.selectedShapePlan?.shapeId).toBe(starterId)
   })
 
+  it('只修改一个图形时复用其他图形的栅格结果', () => {
+    const store = useEditorStore()
+    const firstShapeId = store.shapes[0]!.id
+    store.addDefaultShape('rectangle')
+    const rectangle = store.selectedShape!
+    if (rectangle.type !== 'rectangle') throw new Error('expected rectangle')
+    const firstRows = store.shapePlans.find((plan) => plan.shapeId === firstShapeId)!.rasterRows
+    const rectangleRows = store.shapePlans.find((plan) => plan.shapeId === rectangle.id)!.rasterRows
+
+    store.beginShapeMutation()
+    store.updateShapeLive({ ...rectangle, x: rectangle.x + 1 })
+
+    expect(store.shapePlans.find((plan) => plan.shapeId === firstShapeId)!.rasterRows).toBe(firstRows)
+    expect(store.shapePlans.find((plan) => plan.shapeId === rectangle.id)!.rasterRows).not.toBe(rectangleRows)
+    store.commitShapeMutation()
+  })
+
+  it('实时拖动不反复安排自动保存，提交后保存最终图形', async () => {
+    vi.useFakeTimers()
+    const storage = new MemoryStorage()
+    const setItem = vi.spyOn(storage, 'setItem')
+    stubBrowser(storage)
+    const store = useEditorStore()
+    const shape = store.selectedShape!
+
+    store.beginShapeMutation()
+    store.updateShapeLive({ ...shape, name: '拖动中的最终名称' })
+    await nextTick()
+    vi.advanceTimersByTime(300)
+    expect(setItem).not.toHaveBeenCalled()
+
+    store.commitShapeMutation()
+    await nextTick()
+    vi.advanceTimersByTime(300)
+    expect(setItem).toHaveBeenCalledTimes(1)
+    expect(storage.getItem(EDITOR_STORAGE_KEY)).toContain('拖动中的最终名称')
+    store.$dispose()
+  })
+
   it('在画布上选中哪条路径，就切换到对应的逐行指令', () => {
     const store = useEditorStore()
     const firstShapeId = store.shapes[0]!.id

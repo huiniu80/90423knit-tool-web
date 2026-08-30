@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { calculateGauge } from '../gauge/gauge'
 import type { FabricCanvas } from '../gauge/gauge.types'
 import type { Shape } from '../geometry/shape.types'
-import { rasterize, rasterizeShapes } from './rasterizer'
+import { mergeRasterRows, rasterize, rasterizeShapes } from './rasterizer'
 
 const gauge = calculateGauge({
   sampleStitches: 10,
@@ -49,6 +49,23 @@ describe('Rasterizer', () => {
     })[0]
     expect(first?.segments).toEqual([{ startStitch: 0, endStitch: 4 }])
     expect(first?.stitchCount).toBe(5)
+  })
+
+  it('复用单图形结果合并时与完整栅格化完全一致', () => {
+    const shapes: Shape[] = [
+      { id: 'a', type: 'rectangle', x: -1, y: 0, widthCm: 6, heightCm: 4 },
+      { id: 'b', type: 'circle', center: { x: 6, y: 3 }, radiusCm: 2.5 },
+      {
+        id: 'c', type: 'polygon',
+        points: [{ x: 10, y: 0 }, { x: 16, y: 0 }, { x: 13, y: 7 }],
+      },
+    ]
+    const options = { mode: 'outside' as const, symmetryOptimization: false }
+    const perShapeRows = shapes.map((shape) => rasterize(shape, gauge, canvas, options))
+
+    expect(mergeRasterRows(perShapeRows, gauge, canvas)).toEqual(
+      rasterizeShapes(shapes, gauge, canvas, options),
+    )
   })
 
   it('分离区域从底层开始保留多个 segment', () => {

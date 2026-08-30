@@ -201,8 +201,19 @@ export function rasterizeShapes(
   canvas: FabricCanvas,
   options: RasterOptions,
 ): RasterRow[] {
+  return mergeRasterRows(
+    shapes.map((shape) => rasterize(shape, gauge, canvas, options)),
+    gauge,
+    canvas,
+  )
+}
+
+export function mergeRasterRows(
+  perShapeRows: readonly (readonly RasterRow[])[],
+  gauge: Gauge,
+  canvas: FabricCanvas,
+): RasterRow[] {
   const { columnCount, rowCount } = calculateFabricGrid(canvas, gauge)
-  const perShapeRows = shapes.map((shape) => rasterize(shape, gauge, canvas, options))
   const segmentsByRow = Array.from({ length: rowCount }, (_, rowIndex) =>
     mergeAndClipSegments(
       perShapeRows.flatMap((rows) => rows[rowIndex]?.segments ?? []),

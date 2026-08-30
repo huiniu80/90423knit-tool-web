@@ -6,8 +6,8 @@ import type { PathNode, PathShape, Point, Shape, ShapeType } from '../core/geome
 import { joinConnectedOpenPaths } from '../core/geometry/path'
 import { generateInstructions } from '../core/knitting/planner'
 import type { KnitDirection } from '../core/knitting/planner.types'
-import { rasterize, rasterizeShapes } from '../core/raster/rasterizer'
-import type { RasterOptions } from '../core/raster/raster.types'
+import { mergeRasterRows, rasterize, rasterizeShapes } from '../core/raster/rasterizer'
+import type { RasterOptions, RasterRow } from '../core/raster/raster.types'
 import type {
   EditorTool,
   ShapePlan,
@@ -118,21 +118,64 @@ export const useEditorStore = defineStore('editor', () => {
 
   const undoStack = ref<HistoryEntry[]>([])
   const redoStack = ref<HistoryEntry[]>([])
+  const shapesRevision = ref(0)
   let mutationStart: HistorySnapshot | null = null
+
+  interface CachedShapeRaster {
+    shape: Shape
+    rasterKey: string
+    rows: RasterRow[]
+  }
+
+  interface CachedShapeInstructions {
+    rows: RasterRow[]
+    direction: KnitDirection
+    instructions: ReturnType<typeof generateInstructions>
+  }
+
+  const rasterCache = new Map<string, CachedShapeRaster>()
+  const instructionCache = new Map<string, CachedShapeInstructions>()
 
   const gauge = computed(() => calculateGauge(gaugeInput.value))
   const fabricGrid = computed(() => calculateFabricGrid(fabric.value, gauge.value))
   const selectedShape = computed(
     () => shapes.value.find((shape) => shape.id === selectedShapeId.value) ?? null,
   )
-  const rasterRows = computed(() =>
-    rasterizeShapes(
-      shapes.value.filter(isFabricShape),
-      gauge.value,
-      fabric.value,
-      rasterOptions.value,
-    ),
-  )
+  const shapeRasterRows = computed(() => {
+    const rasterKey = [
+      gauge.value.stitchWidthCm,
+      gauge.value.rowHeightCm,
+      fabric.value.widthCm,
+      fabric.value.heightCm,
+      rasterOptions.value.mode,
+      rasterOptions.value.symmetryOptimization,
+    ].join('|')
+    const liveShapeIds = new Set(shapes.value.map((shape) => shape.id))
+    for (const shapeId of rasterCache.keys()) {
+      if (!liveShapeIds.has(shapeId)) {
+        rasterCache.delete(shapeId)
+        instructionCache.delete(shapeId)
+      }
+    }
+
+    return shapes.value.map((shape) => {
+      const isFabric = isFabricShape(shape)
+      const cached = rasterCache.get(shape.id)
+      if (cached?.shape === shape && cached.rasterKey === rasterKey) {
+        return { shape, rows: cached.rows, isFabric }
+      }
+      const rows = isFabric
+        ? rasterize(shape, gauge.value, fabric.value, rasterOptions.value)
+        : rasterizeShapes([], gauge.value, fabric.value, rasterOptions.value)
+      rasterCache.set(shape.id, { shape, rasterKey, rows })
+      return { shape, rows, isFabric }
+    })
+  })
+  const rasterRows = computed(() => mergeRasterRows(
+    shapeRasterRows.value.filter((item) => item.isFabric).map((item) => item.rows),
+    gauge.value,
+    fabric.value,
+  ))
   function directionForShape(shapeId: string): KnitDirection {
     return shapeDirections.value[shapeId] ?? 'bottom-up'
   }
@@ -145,13 +188,16 @@ export const useEditorStore = defineStore('editor', () => {
       if (selectedPlanShapeId.value) setShapeDirection(selectedPlanShapeId.value, nextDirection)
     },
   })
-  const shapePlans = computed<ShapePlan[]>(() => shapes.value.map((shape) => {
-    const isFabric = isFabricShape(shape)
-    const rows = isFabric
-      ? rasterize(shape, gauge.value, fabric.value, rasterOptions.value)
-      : rasterizeShapes([], gauge.value, fabric.value, rasterOptions.value)
+  const shapePlans = computed<ShapePlan[]>(() => shapeRasterRows.value.map(({ shape, rows, isFabric }) => {
     const shapeDirection = directionForShape(shape.id)
-    const planInstructions = generateInstructions(rows, shapeDirection)
+    const cachedInstructions = instructionCache.get(shape.id)
+    const planInstructions = cachedInstructions?.rows === rows
+      && cachedInstructions.direction === shapeDirection
+      ? cachedInstructions.instructions
+      : generateInstructions(rows, shapeDirection)
+    if (planInstructions !== cachedInstructions?.instructions) {
+      instructionCache.set(shape.id, { rows, direction: shapeDirection, instructions: planInstructions })
+    }
     return {
       shapeId: shape.id,
       shapeName: shape.name,
@@ -214,7 +260,15 @@ export const useEditorStore = defineStore('editor', () => {
     pageLifecycleTarget,
   })
   watch(
-    [gaugeInput, fabric, shapes, shapeDirections, rasterOptions, selectedShapeId, selectedPlanShapeId],
+    [
+      gaugeInput,
+      fabric,
+      shapeDirections,
+      rasterOptions,
+      selectedShapeId,
+      selectedPlanShapeId,
+      shapesRevision,
+    ],
     autoSave.schedule,
     { deep: true },
   )
@@ -238,6 +292,7 @@ export const useEditorStore = defineStore('editor', () => {
 
   function restoreHistorySnapshot(entry: HistoryEntry): void {
     const { snapshot } = entry
+    let shapesChanged = false
     if (JSON.stringify(gaugeInput.value) !== JSON.stringify(snapshot.gaugeInput)) {
       gaugeInput.value = clonePlain(snapshot.gaugeInput)
     }
@@ -246,6 +301,7 @@ export const useEditorStore = defineStore('editor', () => {
     }
     if (JSON.stringify(shapes.value) !== JSON.stringify(snapshot.shapes)) {
       shapes.value = cloneShapes(snapshot.shapes)
+      shapesChanged = true
     }
     if (JSON.stringify(shapeDirections.value) !== JSON.stringify(snapshot.shapeDirections)) {
       shapeDirections.value = clonePlain(snapshot.shapeDirections)
@@ -267,6 +323,7 @@ export const useEditorStore = defineStore('editor', () => {
       activeTool.value = snapshot.draftTool ?? 'select'
     }
     ensureSelectedPlan()
+    if (shapesChanged) shapesRevision.value += 1
   }
 
   function pushUndo(
@@ -290,7 +347,10 @@ export const useEditorStore = defineStore('editor', () => {
 
   function commitShapeMutation(): void {
     if (!mutationStart) return
-    if (JSON.stringify(mutationStart.shapes) !== JSON.stringify(shapes.value)) pushUndo(mutationStart)
+    if (JSON.stringify(mutationStart.shapes) !== JSON.stringify(shapes.value)) {
+      pushUndo(mutationStart)
+      shapesRevision.value += 1
+    }
     mutationStart = null
   }
 
@@ -325,6 +385,7 @@ export const useEditorStore = defineStore('editor', () => {
     selectedShapeId.value = shape.id
     selectedPlanShapeId.value = shape.id
     activeTool.value = 'select'
+    shapesRevision.value += 1
   }
 
   function setShapeDirection(shapeId: string, nextDirection: KnitDirection): void {
@@ -410,6 +471,7 @@ export const useEditorStore = defineStore('editor', () => {
     selectedShapeId.value = path.id
     selectedPlanShapeId.value = path.id
     activeTool.value = 'select'
+    shapesRevision.value += 1
   }
 
   function addPath(nodes: PathNode[], closed: boolean): void {
@@ -452,6 +514,7 @@ export const useEditorStore = defineStore('editor', () => {
     selectedShapeId.value = shapes.value.at(-1)?.id ?? null
     selectedPlanShapeId.value = selectedShapeId.value
     activeTool.value = 'select'
+    shapesRevision.value += 1
   }
 
   function finishPathDraft(closed: boolean): void {
@@ -486,6 +549,7 @@ export const useEditorStore = defineStore('editor', () => {
     shapes.value = shapes.value.filter((shape) => shape.id !== deletedShape.id)
     selectedShapeId.value = shapes.value.at(-1)?.id ?? null
     ensureSelectedPlan()
+    shapesRevision.value += 1
   }
 
   function undo(): void {

@@ -57,6 +57,19 @@ interface AnnotationDraft {
   markers: Array<{ label: string; x: number; y: number }>
 }
 
+interface AnnotationModel {
+  key: string
+  shapeId: string
+  shapeName: string
+  segmentIndex: number
+  side: 'left' | 'right'
+  anchor: Point
+  width: number
+  height: number
+  lines: string[]
+  markers: Array<{ label: string; point: Point }>
+}
+
 interface ShapingAnnotation extends Omit<AnnotationDraft, 'preferredY'> {
   y: number
   connectorPoints: number[]
@@ -103,6 +116,8 @@ let resizeObserver: ResizeObserver | null = null
 let activePenPointerId: number | null = null
 let touchGesture: TouchGesture | null = null
 const touchPointers = new Map<number, Point>()
+let interactionFrameId: number | null = null
+let pendingInteractionPointer: Point | null = null
 
 const canvasBoundaryPadding = 24
 const annotationWidth = 224
@@ -235,10 +250,10 @@ function toggleAnnotationDirection(shapeId: string): void {
   )
 }
 
-const shapingAnnotations = computed<ShapingAnnotation[]>(() => {
+const annotationModels = computed<AnnotationModel[]>(() => {
   if (viewMode.value !== 'outline' && viewMode.value !== 'grid') return []
   const planByShapeId = new Map(shapePlans.value.map((plan) => [plan.shapeId, plan]))
-  const drafts: AnnotationDraft[] = []
+  const models: AnnotationModel[] = []
   const shapeBounds = shapes.value.map(getShapeBounds)
   const outlineLeft = shapeBounds.length ? Math.min(...shapeBounds.map((bounds) => bounds.x)) : 0
   const outlineRight = shapeBounds.length
@@ -275,9 +290,9 @@ const shapingAnnotations = computed<ShapingAnnotation[]>(() => {
       `${shapeName} · 第 ${segment.segmentIndex + 1} 段 · ${directionLabel(shapePlan.direction)}`,
       ...ruleLines,
     ]
-    const duplicateProcess = drafts.some((draft) =>
-      draft.shapeId === segment.shapeId
-      && JSON.stringify(draft.lines.slice(1)) === JSON.stringify(lines.slice(1)),
+    const duplicateProcess = models.some((model) =>
+      model.shapeId === segment.shapeId
+      && JSON.stringify(model.lines.slice(1)) === JSON.stringify(lines.slice(1)),
     )
     if (duplicateProcess) continue
     const height = annotationPaddingY * 2 + lines.length * annotationLineHeight
@@ -285,31 +300,42 @@ const shapingAnnotations = computed<ShapingAnnotation[]>(() => {
     const side = segment.anchor.x < outlineCenterX || (isCentered && segment.segmentIndex % 2 === 0)
       ? 'left'
       : 'right'
-    const anchorX = pan.value.x + segment.anchor.x * zoom.value
-    const anchorY = pan.value.y + (fabric.value.heightCm - segment.anchor.y) * zoom.value
-
-    drafts.push({
+    models.push({
       key: segment.key,
       shapeId: segment.shapeId,
       shapeName,
       segmentIndex: segment.segmentIndex,
       side,
-      anchorX,
-      anchorY,
-      x: side === 'left'
-        ? annotationViewportMargin
-        : stageSize.value.width - annotationViewportMargin - annotationWidth,
-      preferredY: anchorY - height / 2,
+      anchor: segment.anchor,
       width: annotationWidth,
       height,
       lines,
-      markers: description.markers.map((marker) => ({
+      markers: description.markers,
+    })
+  }
+
+  return models
+})
+
+const shapingAnnotations = computed<ShapingAnnotation[]>(() => {
+  const drafts: AnnotationDraft[] = annotationModels.value.map((model) => {
+    const anchorX = pan.value.x + model.anchor.x * zoom.value
+    const anchorY = pan.value.y + (fabric.value.heightCm - model.anchor.y) * zoom.value
+    return {
+      ...model,
+      anchorX,
+      anchorY,
+      x: model.side === 'left'
+        ? annotationViewportMargin
+        : stageSize.value.width - annotationViewportMargin - annotationWidth,
+      preferredY: anchorY - model.height / 2,
+      markers: model.markers.map((marker) => ({
         label: marker.label,
         x: pan.value.x + marker.point.x * zoom.value,
         y: pan.value.y + (fabric.value.heightCm - marker.point.y) * zoom.value,
       })),
-    })
-  }
+    }
+  })
 
   const placed = [
     ...layoutAnnotationSide(drafts.filter((draft) => draft.side === 'left')),
@@ -581,6 +607,7 @@ function touchCenter(first: Point, second: Point): Point {
 }
 
 function beginTouchGesture(): void {
+  flushInteractionMove()
   const points = firstTwoTouchPoints()
   if (!points) return
   const [first, second] = points
@@ -761,27 +788,8 @@ function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
   selectedPathNodeIndex.value = null
 }
 
-function onPointerMove(event: KonvaEventObject<PointerEvent>): void {
-  const pointer = pointerFromEvent(event)
+function applyInteractionMove(pointer: Point): void {
   const current = interaction.value
-  if (!pointer) return
-  if (event.evt.pointerType === 'touch') {
-    if (!touchPointers.has(event.evt.pointerId)) return
-    event.evt.preventDefault()
-    touchPointers.set(event.evt.pointerId, pointer)
-    if (touchGesture) {
-      updateTouchGesture()
-      return
-    }
-  }
-  const name = targetName(event)
-  const annotationTarget = annotationCardTarget(name)
-  canvasBackgroundHovered.value = isCanvasBackground(name)
-  annotationHovered.value = Boolean(annotationTarget)
-  highlightedAnnotationKey.value = annotationTarget
-    ? `${annotationTarget.shapeId}:${annotationTarget.segmentIndex}`
-    : null
-  pathPointer.value = activeTool.value === 'path' ? worldFromScreen(pointer, true) : null
   if (!current) return
 
   if (current.kind === 'pan') {
@@ -842,7 +850,52 @@ function onPointerMove(event: KonvaEventObject<PointerEvent>): void {
   }
 }
 
+function flushInteractionMove(): void {
+  if (interactionFrameId !== null) {
+    cancelAnimationFrame(interactionFrameId)
+    interactionFrameId = null
+  }
+  const pointer = pendingInteractionPointer
+  pendingInteractionPointer = null
+  if (pointer) applyInteractionMove(pointer)
+}
+
+function scheduleInteractionMove(pointer: Point): void {
+  pendingInteractionPointer = pointer
+  if (interactionFrameId !== null) return
+  interactionFrameId = requestAnimationFrame(() => {
+    interactionFrameId = null
+    const latestPointer = pendingInteractionPointer
+    pendingInteractionPointer = null
+    if (latestPointer) applyInteractionMove(latestPointer)
+  })
+}
+
+function onPointerMove(event: KonvaEventObject<PointerEvent>): void {
+  const pointer = pointerFromEvent(event)
+  if (!pointer) return
+  if (event.evt.pointerType === 'touch') {
+    if (!touchPointers.has(event.evt.pointerId)) return
+    event.evt.preventDefault()
+    touchPointers.set(event.evt.pointerId, pointer)
+    if (touchGesture) {
+      updateTouchGesture()
+      return
+    }
+  }
+  const name = targetName(event)
+  const annotationTarget = annotationCardTarget(name)
+  canvasBackgroundHovered.value = isCanvasBackground(name)
+  annotationHovered.value = Boolean(annotationTarget)
+  highlightedAnnotationKey.value = annotationTarget
+    ? `${annotationTarget.shapeId}:${annotationTarget.segmentIndex}`
+    : null
+  pathPointer.value = activeTool.value === 'path' ? worldFromScreen(pointer, true) : null
+  if (interaction.value) scheduleInteractionMove(pointer)
+}
+
 function endInteraction(): void {
+  flushInteractionMove()
   if (interaction.value && interaction.value.kind !== 'pan') store.commitShapeMutation()
   interaction.value = null
 }
@@ -1158,6 +1211,9 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  if (interactionFrameId !== null) cancelAnimationFrame(interactionFrameId)
+  interactionFrameId = null
+  pendingInteractionPointer = null
   resizeObserver?.disconnect()
   window.removeEventListener('keydown', onWindowKeyDown)
 })
