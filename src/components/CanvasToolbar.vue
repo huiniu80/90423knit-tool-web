@@ -1,11 +1,32 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useEditorStore } from '../stores/editor'
 import type { EditorTool } from '../stores/editor.types'
 
 const emit = defineEmits<{ fit: [] }>()
 const store = useEditorStore()
-const { activeTool, canUndo, canRedo, selectedShape, zoom, viewMode } = storeToRefs(store)
+const {
+  activeTool,
+  canUndo,
+  canRedo,
+  fabricGrid,
+  selectedShape,
+  selectedShapeId,
+  shapePlans,
+  zoom,
+  viewMode,
+} = storeToRefs(store)
+
+const selectedPlanOverview = computed(() => {
+  const plan = shapePlans.value.find((item) => item.shapeId === selectedShapeId.value)
+  const first = plan?.instructions[0]
+  if (!plan?.isFabric || !first) return null
+  return {
+    castOnStitches: first.stitchCount,
+    totalRows: plan.instructions.length,
+  }
+})
 
 const tools: Array<{ id: EditorTool; icon: string; label: string }> = [
   { id: 'select', icon: '↖', label: '选择' },
@@ -59,7 +80,13 @@ function changeZoom(delta: number): void {
         </svg>
       </button>
     </div>
-    <div class="toolbar-spacer" />
+    <div class="toolbar-summary" aria-live="polite">
+      <b v-if="selectedPlanOverview">
+        起针 {{ selectedPlanOverview.castOnStitches }} 针 · 共 {{ selectedPlanOverview.totalRows }} 行
+      </b>
+      <b v-else>{{ fabricGrid.columnCount }} 针 × {{ fabricGrid.rowCount }} 行</b>
+      <span>画布 {{ fabricGrid.columnCount }} 针 × {{ fabricGrid.rowCount }} 行 · 原点在左下角</span>
+    </div>
     <div class="segmented-control compact" aria-label="显示模式">
       <button :class="{ active: viewMode === 'outline' }" @click="viewMode = 'outline'">轮廓</button>
       <button :class="{ active: viewMode === 'grid' }" @click="viewMode = 'grid'">针格</button>

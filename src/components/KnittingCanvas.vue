@@ -109,15 +109,6 @@ const fabricWidthPx = computed(() => fabric.value.widthCm * zoom.value)
 const fabricHeightPx = computed(() => fabric.value.heightCm * zoom.value)
 const showRasterFill = computed(() => viewMode.value !== 'outline')
 const showOutlineFill = computed(() => viewMode.value === 'outline' || viewMode.value === 'overlay')
-const selectedPlanOverview = computed(() => {
-  const plan = shapePlans.value.find((item) => item.shapeId === selectedShapeId.value)
-  const first = plan?.instructions[0]
-  if (!plan?.isFabric || !first) return null
-  return {
-    castOnStitches: first.stitchCount,
-    totalRows: plan.instructions.length,
-  }
-})
 const stageCursor = computed(() => {
   if (annotationHovered.value) return 'pointer'
   if (interaction.value?.kind === 'pan') return 'grabbing'
@@ -1264,13 +1255,6 @@ defineExpose({ fitCanvas })
       </v-layer>
     </v-stage>
 
-    <div class="canvas-hud canvas-hud--left">
-      <b v-if="selectedPlanOverview">
-        起针 {{ selectedPlanOverview.castOnStitches }} 针 · 共 {{ selectedPlanOverview.totalRows }} 行
-      </b>
-      <b v-else>{{ fabricGrid.columnCount }} 针 × {{ fabricGrid.rowCount }} 行</b>
-      <span>画布 {{ fabricGrid.columnCount }} 针 × {{ fabricGrid.rowCount }} 行 · 原点在左下角</span>
-    </div>
     <div v-if="viewMode === 'grid' && !selectedGridAnnotationSegment"
       class="canvas-hud canvas-hud--selection-tip">
       <b>点击红色轮廓</b>
