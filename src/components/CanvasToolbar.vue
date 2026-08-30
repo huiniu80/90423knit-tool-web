@@ -32,10 +32,22 @@ function changeZoom(delta: number): void {
       </button>
     </div>
     <div class="toolbar-divider" />
-    <div class="tool-group history-tools">
-      <button class="icon-button" type="button" title="撤销" :disabled="!canUndo" @click="store.undo()">↶</button>
-      <button class="icon-button" type="button" title="重做" :disabled="!canRedo" @click="store.redo()">↷</button>
-      <button class="icon-button danger" type="button" title="删除所选图形" @click="store.deleteSelected()">⌫</button>
+    <div class="tool-group history-tools" aria-label="历史操作">
+      <button class="history-button" type="button" title="撤销（Ctrl/⌘ Z）" aria-label="撤销"
+        aria-keyshortcuts="Control+Z Meta+Z" :disabled="!canUndo" @click="store.undo()">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M9 7 4 12l5 5" />
+          <path d="M4 12h8a7 7 0 0 1 7 7" />
+        </svg>
+      </button>
+      <button class="history-button" type="button" title="重做（Ctrl/⌘ Shift Z）" aria-label="重做"
+        aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z Control+Y Meta+Y" :disabled="!canRedo"
+        @click="store.redo()">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m15 7 5 5-5 5" />
+          <path d="M20 12h-8a7 7 0 0 0-7 7" />
+        </svg>
+      </button>
     </div>
     <div class="toolbar-spacer" />
     <div class="segmented-control compact" aria-label="显示模式">

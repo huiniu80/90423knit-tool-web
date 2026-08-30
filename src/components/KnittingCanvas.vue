@@ -59,9 +59,11 @@ interface ShapingAnnotation extends Omit<AnnotationDraft, 'preferredY'> {
 
 const store = useEditorStore()
 const {
+  canUndo,
   fabric,
   fabricGrid,
   gauge,
+  historyVersion,
   rasterRows,
   shapes,
   shapePlans,
@@ -95,6 +97,13 @@ const annotationPaddingY = 8
 const annotationViewportMargin = 14
 const annotationCollisionGap = 8
 const annotationFabricGap = 38
+const contextualDeleteWidth = 82
+const contextualDeleteHeight = 44
+const contextualDeleteGap = 12
+const contextualActionMargin = 12
+const deleteFeedbackDuration = 3000
+const deleteFeedback = ref<{ name: string; historyVersion: number } | null>(null)
+let deleteFeedbackTimer: ReturnType<typeof setTimeout> | null = null
 
 function clonePlain<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -408,6 +417,55 @@ const selectionRect = computed(() => {
     height: bounds.height * zoom.value,
   }
 })
+
+const contextualDeleteStyle = computed(() => {
+  const rect = selectionRect.value
+  if (!rect || interaction.value) return null
+
+  let left = pan.value.x + rect.x + rect.width - contextualDeleteWidth
+  let top = pan.value.y + rect.y - contextualDeleteHeight - contextualDeleteGap
+  if (top < contextualActionMargin) {
+    top = pan.value.y + rect.y + rect.height + contextualDeleteGap
+  }
+
+  left = Math.min(
+    Math.max(left, contextualActionMargin),
+    Math.max(contextualActionMargin, stageSize.value.width - contextualDeleteWidth - contextualActionMargin),
+  )
+  top = Math.min(
+    Math.max(top, contextualActionMargin),
+    Math.max(contextualActionMargin, stageSize.value.height - contextualDeleteHeight - contextualActionMargin),
+  )
+
+  return { left: `${left}px`, top: `${top}px` }
+})
+
+function clearDeleteFeedback(): void {
+  if (deleteFeedbackTimer) clearTimeout(deleteFeedbackTimer)
+  deleteFeedbackTimer = null
+  deleteFeedback.value = null
+}
+
+function showDeleteFeedback(name: string): void {
+  clearDeleteFeedback()
+  deleteFeedback.value = { name, historyVersion: historyVersion.value }
+  deleteFeedbackTimer = setTimeout(clearDeleteFeedback, deleteFeedbackDuration)
+}
+
+function deleteSelectedShape(): void {
+  const deleted = store.deleteSelected()
+  if (deleted) showDeleteFeedback(deleted.name)
+}
+
+function undoDeletedShape(): void {
+  const feedback = deleteFeedback.value
+  if (!feedback || feedback.historyVersion !== historyVersion.value || !canUndo.value) {
+    clearDeleteFeedback()
+    return
+  }
+  clearDeleteFeedback()
+  store.undo()
+}
 
 const resizeHandles = computed(() => {
   const rect = selectionRect.value
@@ -919,6 +977,11 @@ function onKeyDown(event: KeyboardEvent): void {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
     event.preventDefault()
     event.shiftKey ? store.redo() : store.undo()
+    return
+  }
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'y') {
+    event.preventDefault()
+    store.redo()
   }
 }
 
@@ -976,6 +1039,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()
+  if (deleteFeedbackTimer) clearTimeout(deleteFeedbackTimer)
   window.removeEventListener('keydown', onWindowKeyDown)
 })
 watch(() => [fabric.value.widthCm, fabric.value.heightCm], () => nextTick(fitCanvas))
@@ -1000,6 +1064,9 @@ watch(() => shapes.value.map((shape) => shape.id), (shapeIds) => {
   ) {
     selectedGridAnnotationSegment.value = null
   }
+})
+watch(historyVersion, (version) => {
+  if (deleteFeedback.value && deleteFeedback.value.historyVersion !== version) clearDeleteFeedback()
 })
 
 defineExpose({ fitCanvas })
@@ -1187,6 +1254,23 @@ defineExpose({ fitCanvas })
         </template>
       </v-layer>
     </v-stage>
+
+    <button v-if="contextualDeleteStyle" class="contextual-delete" type="button"
+      :style="contextualDeleteStyle" aria-label="删除所选图形" title="删除所选图形"
+      @pointerdown.stop @mousedown.stop @click.stop="deleteSelectedShape">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 7h16" />
+        <path d="M9 7V4h6v3" />
+        <path d="m7 7 1 13h8l1-13" />
+        <path d="M10 11v5M14 11v5" />
+      </svg>
+      <span>删除</span>
+    </button>
+
+    <div v-if="deleteFeedback" class="delete-feedback" role="status" aria-live="polite">
+      <span>已删除“{{ deleteFeedback.name }}”</span>
+      <button type="button" @click="undoDeletedShape">撤销</button>
+    </div>
 
     <div class="canvas-hud canvas-hud--left">
       <b>{{ fabricGrid.columnCount }} 针 × {{ fabricGrid.rowCount }} 行</b>

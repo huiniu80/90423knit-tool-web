@@ -80,6 +80,40 @@ describe('Editor Store', () => {
     expect(store.shapePlans.some((plan) => plan.shapeId === store.selectedPlanShapeId)).toBe(true)
   })
 
+  it('删除返回图形信息，撤销后恢复原图形和选择状态', () => {
+    const store = useEditorStore()
+    store.addDefaultShape('circle')
+    const circleId = store.selectedShapeId!
+    const versionBeforeDelete = store.historyVersion
+
+    const deleted = store.deleteSelected()
+    expect(deleted).toEqual({ id: circleId, name: '新建circle' })
+    expect(store.historyVersion).toBe(versionBeforeDelete + 1)
+    expect(store.shapes.some((shape) => shape.id === circleId)).toBe(false)
+    expect(store.selectedShapeId).not.toBe(circleId)
+
+    store.undo()
+    expect(store.shapes.some((shape) => shape.id === circleId)).toBe(true)
+    expect(store.selectedShapeId).toBe(circleId)
+    expect(store.selectedPlanShapeId).toBe(circleId)
+
+    store.redo()
+    expect(store.shapes.some((shape) => shape.id === circleId)).toBe(false)
+    expect(store.selectedShapeId).not.toBe(circleId)
+  })
+
+  it('撤销后产生新编辑会清空重做栈并推进历史版本', () => {
+    const store = useEditorStore()
+    store.addDefaultShape('circle')
+    store.undo()
+    expect(store.canRedo).toBe(true)
+    const versionBeforeNewEdit = store.historyVersion
+
+    store.addDefaultShape('rectangle')
+    expect(store.canRedo).toBe(false)
+    expect(store.historyVersion).toBe(versionBeforeNewEdit + 1)
+  })
+
   it('每个轮廓对象使用独立方向，新对象默认自下而上', () => {
     const store = useEditorStore()
     const firstShapeId = store.shapes[0]!.id

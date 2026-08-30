@@ -19,6 +19,17 @@ function clonePlain<T>(value: T): T {
 
 const cloneShapes = (value: Shape[]): Shape[] => clonePlain(value)
 
+interface HistorySnapshot {
+  shapes: Shape[]
+  selectedShapeId: string | null
+  selectedPlanShapeId: string | null
+}
+
+export interface DeletedShapeSummary {
+  id: string
+  name: string
+}
+
 function isFabricShape(shape: Shape): boolean {
   return shape.type !== 'path' || shape.closed
 }
@@ -62,9 +73,10 @@ export const useEditorStore = defineStore('editor', () => {
   const activeTool = ref<EditorTool>('select')
   const viewMode = ref<ViewMode>('overlay')
 
-  const undoStack = ref<Shape[][]>([])
-  const redoStack = ref<Shape[][]>([])
-  let mutationStart: Shape[] | null = null
+  const undoStack = ref<HistorySnapshot[]>([])
+  const redoStack = ref<HistorySnapshot[]>([])
+  const historyVersion = ref(0)
+  let mutationStart: HistorySnapshot | null = null
 
   const gauge = computed(() => calculateGauge(gaugeInput.value))
   const fabricGrid = computed(() => calculateFabricGrid(fabric.value, gauge.value))
@@ -129,14 +141,34 @@ export const useEditorStore = defineStore('editor', () => {
     }
   }, { flush: 'sync' })
 
-  function pushUndo(snapshot: Shape[]): void {
-    undoStack.value.push(cloneShapes(snapshot))
+  function captureHistorySnapshot(): HistorySnapshot {
+    return {
+      shapes: cloneShapes(shapes.value),
+      selectedShapeId: selectedShapeId.value,
+      selectedPlanShapeId: selectedPlanShapeId.value,
+    }
+  }
+
+  function restoreHistorySnapshot(snapshot: HistorySnapshot): void {
+    shapes.value = cloneShapes(snapshot.shapes)
+    selectedShapeId.value = shapes.value.some((shape) => shape.id === snapshot.selectedShapeId)
+      ? snapshot.selectedShapeId
+      : shapes.value.at(-1)?.id ?? null
+    selectedPlanShapeId.value = shapes.value.some((shape) => shape.id === snapshot.selectedPlanShapeId)
+      ? snapshot.selectedPlanShapeId
+      : selectedShapeId.value
+    ensureSelectedPlan()
+  }
+
+  function pushUndo(snapshot: HistorySnapshot): void {
+    undoStack.value.push(clonePlain(snapshot))
     if (undoStack.value.length > 100) undoStack.value.shift()
     redoStack.value = []
+    historyVersion.value += 1
   }
 
   function beginShapeMutation(): void {
-    if (!mutationStart) mutationStart = cloneShapes(shapes.value)
+    if (!mutationStart) mutationStart = captureHistorySnapshot()
   }
 
   function updateShapeLive(nextShape: Shape): void {
@@ -146,7 +178,7 @@ export const useEditorStore = defineStore('editor', () => {
 
   function commitShapeMutation(): void {
     if (!mutationStart) return
-    if (JSON.stringify(mutationStart) !== JSON.stringify(shapes.value)) pushUndo(mutationStart)
+    if (JSON.stringify(mutationStart.shapes) !== JSON.stringify(shapes.value)) pushUndo(mutationStart)
     mutationStart = null
   }
 
@@ -157,7 +189,7 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   function addShape(shape: Shape): void {
-    pushUndo(shapes.value)
+    pushUndo(captureHistorySnapshot())
     shapes.value.push(shape)
     selectedShapeId.value = shape.id
     selectedPlanShapeId.value = shape.id
@@ -224,31 +256,30 @@ export const useEditorStore = defineStore('editor', () => {
     })
   }
 
-  function deleteSelected(): void {
-    if (!selectedShapeId.value) return
-    pushUndo(shapes.value)
-    shapes.value = shapes.value.filter((shape) => shape.id !== selectedShapeId.value)
+  function deleteSelected(): DeletedShapeSummary | null {
+    const deletedShape = selectedShape.value
+    if (!deletedShape) return null
+    pushUndo(captureHistorySnapshot())
+    shapes.value = shapes.value.filter((shape) => shape.id !== deletedShape.id)
     selectedShapeId.value = shapes.value.at(-1)?.id ?? null
     ensureSelectedPlan()
+    return { id: deletedShape.id, name: deletedShape.name ?? '未命名图形' }
   }
 
   function undo(): void {
     const previous = undoStack.value.pop()
     if (!previous) return
-    redoStack.value.push(cloneShapes(shapes.value))
-    shapes.value = cloneShapes(previous)
-    if (!shapes.value.some((shape) => shape.id === selectedShapeId.value)) {
-      selectedShapeId.value = shapes.value.at(-1)?.id ?? null
-    }
-    ensureSelectedPlan()
+    redoStack.value.push(captureHistorySnapshot())
+    restoreHistorySnapshot(previous)
+    historyVersion.value += 1
   }
 
   function redo(): void {
     const next = redoStack.value.pop()
     if (!next) return
-    undoStack.value.push(cloneShapes(shapes.value))
-    shapes.value = cloneShapes(next)
-    ensureSelectedPlan()
+    undoStack.value.push(captureHistorySnapshot())
+    restoreHistorySnapshot(next)
+    historyVersion.value += 1
   }
 
   return {
@@ -271,6 +302,7 @@ export const useEditorStore = defineStore('editor', () => {
     selectedShapePlan,
     instructions,
     hasSeparatedRegions,
+    historyVersion: computed(() => historyVersion.value),
     canUndo: computed(() => undoStack.value.length > 0),
     canRedo: computed(() => redoStack.value.length > 0),
     beginShapeMutation,

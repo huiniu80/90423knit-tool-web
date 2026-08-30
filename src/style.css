@@ -178,17 +178,22 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .tool-button:hover { background: #eeeae2; }
 .tool-button.active { color: #fff; background: var(--forest-2); border-color: var(--forest-2); }
 .toolbar-divider { width: 1px; height: 34px; background: var(--line); }
-.icon-button {
-  width: 32px;
-  height: 32px;
+.history-tools { flex: 0 0 auto; }
+.history-button {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: 11px;
   background: var(--paper);
   cursor: pointer;
+  transition: color .15s, border-color .15s, background .15s, transform .15s;
 }
-.icon-button:hover:not(:disabled) { color: var(--forest-2); border-color: #91aa9f; }
-.icon-button:disabled { opacity: .35; cursor: default; }
-.icon-button.danger:hover:not(:disabled) { color: var(--rust); border-color: #d7a79c; }
+.history-button svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.history-button:hover:not(:disabled) { color: var(--forest-2); border-color: #91aa9f; background: #f2f7f4; }
+.history-button:active:not(:disabled) { transform: scale(.95); }
+.history-button:disabled { opacity: .32; cursor: default; }
 .toolbar-spacer { flex: 1; }
 .segmented-control { display: inline-flex; padding: 3px; border-radius: 8px; background: #e6e2da; }
 .segmented-control button { padding: 6px 10px; border: 0; border-radius: 6px; color: #70736e; background: transparent; cursor: pointer; font-size: 10px; }
@@ -201,6 +206,52 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 
 .knitting-canvas { position: relative; min-width: 0; min-height: 0; flex: 1; overflow: hidden; contain: layout paint; outline: none; background-color: #e8e3da; background-image: radial-gradient(#c7c0b4 0.7px, transparent 0.7px); background-size: 16px 16px; }
 .knitting-canvas:focus-visible { box-shadow: inset 0 0 0 2px #4d8b7c; }
+.contextual-delete {
+  position: absolute;
+  z-index: 4;
+  width: 82px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid #d8a39a;
+  border-radius: 12px;
+  color: #9f3e2d;
+  background: rgba(255, 253, 248, .97);
+  box-shadow: 0 7px 20px rgba(75, 52, 43, .16);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  transition: color .15s, background .15s, border-color .15s, transform .15s;
+}
+.contextual-delete svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.contextual-delete:hover { color: #fffdf8; background: var(--rust); border-color: var(--rust); }
+.contextual-delete:active { transform: scale(.96); }
+.delete-feedback {
+  position: absolute;
+  z-index: 5;
+  left: 50%;
+  bottom: 18px;
+  min-height: 44px;
+  max-width: calc(100% - 28px);
+  padding: 7px 8px 7px 14px;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 12px;
+  color: #f7f4ed;
+  background: rgba(38, 61, 54, .96);
+  box-shadow: 0 8px 24px rgba(29, 46, 40, .22);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.delete-feedback span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.delete-feedback button { min-width: 52px; min-height: 30px; flex: 0 0 auto; padding: 0 10px; border: 0; border-radius: 8px; color: #263d36; background: #f2b453; cursor: pointer; font-size: 10px; font-weight: 750; }
+.delete-feedback button:hover { background: #ffc66a; }
 .canvas-hud { position: absolute; pointer-events: none; padding: 8px 11px; border: 1px solid rgba(95,85,73,.14); border-radius: 7px; color: #5a5f59; background: rgba(255,253,248,.9); box-shadow: 0 3px 12px rgba(55,47,38,.08); backdrop-filter: blur(6px); }
 .canvas-hud--left { left: 14px; bottom: 14px; }
 .canvas-hud--selection-tip { top: 12px; left: 50%; transform: translateX(-50%); }
@@ -231,6 +282,9 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   .left-panel { display: grid; grid-template-columns: 1fr 1fr; max-height: 480px; border-right: 0; border-bottom: 1px solid var(--line); }
   .panel-section { padding: 15px 14px; }
   .workspace { height: 620px; }
-  .canvas-toolbar { overflow-x: auto; }
-  .toolbar-spacer, .history-tools, .toolbar-divider { display: none; }
+  .canvas-toolbar { padding-inline: 10px; gap: 7px; overflow-x: auto; scrollbar-width: none; }
+  .canvas-toolbar::-webkit-scrollbar { display: none; }
+  .tool-button { width: 42px; }
+  .toolbar-spacer, .toolbar-divider { display: none; }
+  .delete-feedback { bottom: 64px; }
 }
