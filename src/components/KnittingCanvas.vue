@@ -4,7 +4,6 @@ import { storeToRefs } from 'pinia'
 import type { KonvaEventObject } from 'konva/lib/Node'
 import type {
   Bounds,
-  PathNode,
   PathShape,
   Point,
   PolygonShape,
@@ -75,14 +74,15 @@ const {
   activeTool,
   viewMode,
   zoom,
+  draftPoints,
+  draftPathNodes,
+  draftTool,
 } = storeToRefs(store)
 
 const host = ref<HTMLDivElement | null>(null)
 const stageSize = ref({ width: 900, height: 600 })
 const pan = ref<Point>({ x: 60, y: 40 })
 const interaction = ref<Interaction | null>(null)
-const draftPoints = ref<Point[]>([])
-const draftPathNodes = ref<PathNode[]>([])
 const pathPointer = ref<Point | null>(null)
 const selectedPointIndex = ref<number | null>(null)
 const selectedPathNodeIndex = ref<number | null>(null)
@@ -812,7 +812,7 @@ function onStageClick(event: KonvaEventObject<MouseEvent>): void {
       pathSnapDistanceCm.value,
     )
     const point = endpointSnap?.point ?? rawPoint
-    draftPathNodes.value.push({ anchor: point })
+    store.addDraftPathNode({ anchor: point })
     return
   }
 
@@ -827,20 +827,18 @@ function onStageClick(event: KonvaEventObject<MouseEvent>): void {
     finishPolygon()
     return
   }
-  draftPoints.value.push(point)
+  store.addDraftPoint(point)
 }
 
 function finishPolygon(): void {
   if (draftPoints.value.length < 3) return
-  store.addPolygon(clonePlain(draftPoints.value))
-  draftPoints.value = []
+  store.finishPolygonDraft()
 }
 
 function finishPath(closed: boolean): void {
   const minimum = closed ? 3 : 2
   if (draftPathNodes.value.length < minimum) return
-  store.addPath(clonePlain(draftPathNodes.value), closed)
-  draftPathNodes.value = []
+  store.finishPathDraft(closed)
 }
 
 function nearestEdgeInsertion(shape: PolygonShape, point: Point): number {
@@ -924,8 +922,7 @@ function onWheel(event: KonvaEventObject<WheelEvent>): void {
 function onKeyDown(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
     event.preventDefault()
-    draftPoints.value = []
-    draftPathNodes.value = []
+    store.cancelDrawing()
     interaction.value = null
     if (activeTool.value === 'polygon' || activeTool.value === 'path') activeTool.value = 'select'
     return
@@ -1043,8 +1040,7 @@ onBeforeUnmount(() => {
 watch(() => [fabric.value.widthCm, fabric.value.heightCm], () => nextTick(fitCanvas))
 watch(zoom, () => nextTick(() => (pan.value = clampPan(pan.value))))
 watch(activeTool, (tool) => {
-  if (tool !== 'polygon') draftPoints.value = []
-  if (tool !== 'path') draftPathNodes.value = []
+  if (draftTool.value && tool !== draftTool.value) store.cancelDrawing()
   if (tool !== 'path') pathPointer.value = null
 })
 watch(selectedShapeId, () => {

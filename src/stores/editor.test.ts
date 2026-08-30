@@ -152,6 +152,122 @@ describe('Editor Store', () => {
     expect(store.selectedShape?.type === 'path' && store.selectedShape.nodes[1]?.inControl).toEqual({ x: 6, y: 4 })
   })
 
+  it('连续绘制按每次落点和完成操作逐步撤销与重做', () => {
+    const store = useEditorStore()
+    const initialCount = store.shapes.length
+    store.activeTool = 'path'
+    store.addDraftPathNode({ anchor: { x: 2, y: 2 } })
+    store.addDraftPathNode({ anchor: { x: 8, y: 2 } })
+    store.addDraftPathNode({ anchor: { x: 8, y: 8 } })
+    store.finishPathDraft(true)
+
+    expect(store.shapes).toHaveLength(initialCount + 1)
+    expect(store.draftPathNodes).toHaveLength(0)
+    expect(store.activeTool).toBe('select')
+
+    store.undo()
+    expect(store.shapes).toHaveLength(initialCount)
+    expect(store.draftPathNodes).toHaveLength(3)
+    expect(store.activeTool).toBe('path')
+
+    store.undo()
+    expect(store.draftPathNodes).toHaveLength(2)
+    store.redo()
+    expect(store.draftPathNodes).toHaveLength(3)
+    store.redo()
+    expect(store.shapes).toHaveLength(initialCount + 1)
+    expect(store.draftPathNodes).toHaveLength(0)
+    expect(store.activeTool).toBe('select')
+  })
+
+  it('自由多边形草稿可逐点撤销直到清空起点', () => {
+    const store = useEditorStore()
+    store.activeTool = 'polygon'
+    store.addDraftPoint({ x: 2, y: 2 })
+    store.addDraftPoint({ x: 8, y: 2 })
+    store.addDraftPoint({ x: 5, y: 8 })
+
+    store.undo()
+    expect(store.draftPoints).toHaveLength(2)
+    store.undo()
+    expect(store.draftPoints).toHaveLength(1)
+    store.undo()
+    expect(store.draftPoints).toHaveLength(0)
+    expect(store.activeTool).toBe('polygon')
+  })
+
+  it('取消草稿会丢弃该绘图会话的撤销和重做记录', () => {
+    const store = useEditorStore()
+    store.addDefaultShape('circle')
+    const countAfterCircle = store.shapes.length
+    store.activeTool = 'path'
+    store.addDraftPathNode({ anchor: { x: 2, y: 2 } })
+    store.addDraftPathNode({ anchor: { x: 8, y: 2 } })
+    store.undo()
+    expect(store.canRedo).toBe(true)
+
+    store.cancelDrawing()
+    expect(store.canRedo).toBe(false)
+    expect(store.draftPathNodes).toHaveLength(0)
+    store.undo()
+    expect(store.shapes).toHaveLength(countAfterCircle - 1)
+  })
+
+  it('取消草稿后撤销期间的参数修改不会恢复草稿', () => {
+    const store = useEditorStore()
+    store.activeTool = 'path'
+    store.addDraftPathNode({ anchor: { x: 2, y: 2 } })
+    store.setGaugeInputValue('sampleStitches', 12)
+    store.addDraftPathNode({ anchor: { x: 8, y: 2 } })
+
+    store.cancelDrawing()
+    store.undo()
+    expect(store.gaugeInput.sampleStitches).toBe(10)
+    expect(store.draftPathNodes).toHaveLength(0)
+    store.redo()
+    expect(store.gaugeInput.sampleStitches).toBe(12)
+    expect(store.draftPathNodes).toHaveLength(0)
+  })
+
+  it('编织参数、画布尺寸、离散策略和编织方向均按步骤撤销', () => {
+    const store = useEditorStore()
+    const shapeId = store.shapes[0]!.id
+    store.setGaugeInputValue('sampleStitches', 12)
+    store.setFabricValue('widthCm', 42)
+    store.setRasterOptions({ mode: 'inside' })
+    store.setShapeDirection(shapeId, 'top-down')
+
+    expect(store.direction).toBe('top-down')
+    store.undo()
+    expect(store.direction).toBe('bottom-up')
+    store.undo()
+    expect(store.rasterOptions.mode).toBe('center')
+    store.undo()
+    expect(store.fabric.widthCm).toBe(30)
+    store.undo()
+    expect(store.gaugeInput.sampleStitches).toBe(10)
+
+    store.redo()
+    store.redo()
+    store.redo()
+    store.redo()
+    expect(store.gaugeInput.sampleStitches).toBe(12)
+    expect(store.fabric.widthCm).toBe(42)
+    expect(store.rasterOptions.mode).toBe('inside')
+    expect(store.direction).toBe('top-down')
+  })
+
+  it('最多保留最近 100 个操作步骤', () => {
+    const store = useEditorStore()
+    for (let value = 11; value <= 111; value += 1) {
+      store.setGaugeInputValue('sampleStitches', value)
+    }
+    for (let index = 0; index < 100; index += 1) store.undo()
+
+    expect(store.gaugeInput.sampleStitches).toBe(11)
+    expect(store.canUndo).toBe(false)
+  })
+
   it('相接的开放路径自动拼合并在围成轮廓时转为织片', () => {
     const store = useEditorStore()
     const initialCount = store.shapes.length

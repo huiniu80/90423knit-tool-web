@@ -21,9 +21,23 @@ function clonePlain<T>(value: T): T {
 const cloneShapes = (value: Shape[]): Shape[] => clonePlain(value)
 
 interface HistorySnapshot {
+  gaugeInput: GaugeInput
+  fabric: FabricCanvas
   shapes: Shape[]
+  shapeDirections: Record<string, KnitDirection>
+  rasterOptions: RasterOptions
   selectedShapeId: string | null
   selectedPlanShapeId: string | null
+  draftPoints: Point[]
+  draftPathNodes: PathNode[]
+  draftTool: 'polygon' | 'path' | null
+  drawingSessionId: string | null
+}
+
+interface HistoryEntry {
+  snapshot: HistorySnapshot
+  kind: 'content' | 'drawing'
+  drawingSessionId: string | null
 }
 
 function isFabricShape(shape: Shape): boolean {
@@ -68,9 +82,13 @@ export const useEditorStore = defineStore('editor', () => {
   })
   const activeTool = ref<EditorTool>('select')
   const viewMode = ref<ViewMode>('overlay')
+  const draftPoints = ref<Point[]>([])
+  const draftPathNodes = ref<PathNode[]>([])
+  const draftTool = ref<'polygon' | 'path' | null>(null)
+  const drawingSessionId = ref<string | null>(null)
 
-  const undoStack = ref<HistorySnapshot[]>([])
-  const redoStack = ref<HistorySnapshot[]>([])
+  const undoStack = ref<HistoryEntry[]>([])
+  const redoStack = ref<HistoryEntry[]>([])
   let mutationStart: HistorySnapshot | null = null
 
   const gauge = computed(() => calculateGauge(gaugeInput.value))
@@ -138,25 +156,49 @@ export const useEditorStore = defineStore('editor', () => {
 
   function captureHistorySnapshot(): HistorySnapshot {
     return {
+      gaugeInput: clonePlain(gaugeInput.value),
+      fabric: clonePlain(fabric.value),
       shapes: cloneShapes(shapes.value),
+      shapeDirections: clonePlain(shapeDirections.value),
+      rasterOptions: clonePlain(rasterOptions.value),
       selectedShapeId: selectedShapeId.value,
       selectedPlanShapeId: selectedPlanShapeId.value,
+      draftPoints: clonePlain(draftPoints.value),
+      draftPathNodes: clonePlain(draftPathNodes.value),
+      draftTool: draftTool.value,
+      drawingSessionId: drawingSessionId.value,
     }
   }
 
-  function restoreHistorySnapshot(snapshot: HistorySnapshot): void {
+  function restoreHistorySnapshot(entry: HistoryEntry): void {
+    const { snapshot } = entry
+    gaugeInput.value = clonePlain(snapshot.gaugeInput)
+    fabric.value = clonePlain(snapshot.fabric)
     shapes.value = cloneShapes(snapshot.shapes)
+    shapeDirections.value = clonePlain(snapshot.shapeDirections)
+    rasterOptions.value = clonePlain(snapshot.rasterOptions)
     selectedShapeId.value = shapes.value.some((shape) => shape.id === snapshot.selectedShapeId)
       ? snapshot.selectedShapeId
       : shapes.value.at(-1)?.id ?? null
     selectedPlanShapeId.value = shapes.value.some((shape) => shape.id === snapshot.selectedPlanShapeId)
       ? snapshot.selectedPlanShapeId
       : selectedShapeId.value
+    if (entry.kind === 'drawing') {
+      draftPoints.value = clonePlain(snapshot.draftPoints)
+      draftPathNodes.value = clonePlain(snapshot.draftPathNodes)
+      draftTool.value = snapshot.draftTool
+      drawingSessionId.value = snapshot.drawingSessionId
+      activeTool.value = snapshot.draftTool ?? 'select'
+    }
     ensureSelectedPlan()
   }
 
-  function pushUndo(snapshot: HistorySnapshot): void {
-    undoStack.value.push(clonePlain(snapshot))
+  function pushUndo(
+    snapshot: HistorySnapshot,
+    kind: HistoryEntry['kind'] = 'content',
+    sessionId: string | null = null,
+  ): void {
+    undoStack.value.push({ snapshot: clonePlain(snapshot), kind, drawingSessionId: sessionId })
     if (undoStack.value.length > 100) undoStack.value.shift()
     redoStack.value = []
   }
@@ -182,6 +224,25 @@ export const useEditorStore = defineStore('editor', () => {
     commitShapeMutation()
   }
 
+  function setGaugeInputValue(key: keyof GaugeInput, value: number): void {
+    if (gaugeInput.value[key] === value) return
+    pushUndo(captureHistorySnapshot())
+    gaugeInput.value = { ...gaugeInput.value, [key]: value }
+  }
+
+  function setFabricValue(key: keyof FabricCanvas, value: number): void {
+    if (fabric.value[key] === value) return
+    pushUndo(captureHistorySnapshot())
+    fabric.value = { ...fabric.value, [key]: value }
+  }
+
+  function setRasterOptions(nextOptions: Partial<RasterOptions>): void {
+    const next = { ...rasterOptions.value, ...nextOptions }
+    if (JSON.stringify(next) === JSON.stringify(rasterOptions.value)) return
+    pushUndo(captureHistorySnapshot())
+    rasterOptions.value = next
+  }
+
   function addShape(shape: Shape): void {
     pushUndo(captureHistorySnapshot())
     shapes.value.push(shape)
@@ -192,6 +253,8 @@ export const useEditorStore = defineStore('editor', () => {
 
   function setShapeDirection(shapeId: string, nextDirection: KnitDirection): void {
     if (!shapes.value.some((shape) => shape.id === shapeId)) return
+    if (directionForShape(shapeId) === nextDirection) return
+    pushUndo(captureHistorySnapshot())
     shapeDirections.value = {
       ...shapeDirections.value,
       [shapeId]: nextDirection,
@@ -240,8 +303,7 @@ export const useEditorStore = defineStore('editor', () => {
     addShape({ id: createId(), name: '自由多边形', type: 'polygon', points })
   }
 
-  function addPath(nodes: PathNode[], closed: boolean): void {
-    const history = captureHistorySnapshot()
+  function insertPath(nodes: PathNode[], closed: boolean): void {
     let path: PathShape = {
       id: createId(),
       name: closed ? '自定义闭合路径' : '自定义开放路径',
@@ -267,12 +329,78 @@ export const useEditorStore = defineStore('editor', () => {
       }
     }
 
-    pushUndo(history)
     shapes.value = shapes.value.filter((shape) => !joinedShapeIds.has(shape.id))
     shapes.value.push(path)
     selectedShapeId.value = path.id
     selectedPlanShapeId.value = path.id
     activeTool.value = 'select'
+  }
+
+  function addPath(nodes: PathNode[], closed: boolean): void {
+    pushUndo(captureHistorySnapshot())
+    insertPath(nodes, closed)
+  }
+
+  function beginDrawing(tool: 'polygon' | 'path'): string {
+    if (draftTool.value !== tool || !drawingSessionId.value) {
+      draftPoints.value = []
+      draftPathNodes.value = []
+      draftTool.value = tool
+      drawingSessionId.value = createId()
+    }
+    return drawingSessionId.value
+  }
+
+  function addDraftPoint(point: Point): void {
+    const sessionId = beginDrawing('polygon')
+    pushUndo(captureHistorySnapshot(), 'drawing', sessionId)
+    draftPoints.value.push(clonePlain(point))
+  }
+
+  function addDraftPathNode(node: PathNode): void {
+    const sessionId = beginDrawing('path')
+    pushUndo(captureHistorySnapshot(), 'drawing', sessionId)
+    draftPathNodes.value.push(clonePlain(node))
+  }
+
+  function finishPolygonDraft(): void {
+    if (draftTool.value !== 'polygon' || draftPoints.value.length < 3 || !drawingSessionId.value) return
+    const history = captureHistorySnapshot()
+    const sessionId = drawingSessionId.value
+    const points = clonePlain(draftPoints.value)
+    pushUndo(history, 'drawing', sessionId)
+    draftPoints.value = []
+    draftTool.value = null
+    drawingSessionId.value = null
+    shapes.value.push({ id: createId(), name: '自由多边形', type: 'polygon', points })
+    selectedShapeId.value = shapes.value.at(-1)?.id ?? null
+    selectedPlanShapeId.value = selectedShapeId.value
+    activeTool.value = 'select'
+  }
+
+  function finishPathDraft(closed: boolean): void {
+    const minimum = closed ? 3 : 2
+    if (draftTool.value !== 'path' || draftPathNodes.value.length < minimum || !drawingSessionId.value) return
+    const history = captureHistorySnapshot()
+    const sessionId = drawingSessionId.value
+    const nodes = clonePlain(draftPathNodes.value)
+    pushUndo(history, 'drawing', sessionId)
+    draftPathNodes.value = []
+    draftTool.value = null
+    drawingSessionId.value = null
+    insertPath(nodes, closed)
+  }
+
+  function cancelDrawing(): void {
+    const sessionId = drawingSessionId.value
+    if (sessionId) {
+      undoStack.value = undoStack.value.filter((entry) => entry.drawingSessionId !== sessionId)
+      redoStack.value = redoStack.value.filter((entry) => entry.drawingSessionId !== sessionId)
+    }
+    draftPoints.value = []
+    draftPathNodes.value = []
+    draftTool.value = null
+    drawingSessionId.value = null
   }
 
   function deleteSelected(): void {
@@ -287,14 +415,22 @@ export const useEditorStore = defineStore('editor', () => {
   function undo(): void {
     const previous = undoStack.value.pop()
     if (!previous) return
-    redoStack.value.push(captureHistorySnapshot())
+    redoStack.value.push({
+      snapshot: captureHistorySnapshot(),
+      kind: previous.kind,
+      drawingSessionId: previous.drawingSessionId,
+    })
     restoreHistorySnapshot(previous)
   }
 
   function redo(): void {
     const next = redoStack.value.pop()
     if (!next) return
-    undoStack.value.push(captureHistorySnapshot())
+    undoStack.value.push({
+      snapshot: captureHistorySnapshot(),
+      kind: next.kind,
+      drawingSessionId: next.drawingSessionId,
+    })
     restoreHistorySnapshot(next)
   }
 
@@ -310,6 +446,9 @@ export const useEditorStore = defineStore('editor', () => {
     rasterOptions,
     activeTool,
     viewMode,
+    draftPoints,
+    draftPathNodes,
+    draftTool,
     gauge,
     fabricGrid,
     selectedShape,
@@ -324,11 +463,19 @@ export const useEditorStore = defineStore('editor', () => {
     updateShapeLive,
     commitShapeMutation,
     replaceShape,
+    setGaugeInputValue,
+    setFabricValue,
+    setRasterOptions,
     addShape,
     setShapeDirection,
     addDefaultShape,
     addPolygon,
     addPath,
+    addDraftPoint,
+    addDraftPathNode,
+    finishPolygonDraft,
+    finishPathDraft,
+    cancelDrawing,
     deleteSelected,
     undo,
     redo,
