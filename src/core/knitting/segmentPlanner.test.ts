@@ -69,6 +69,36 @@ describe('分段加减针说明', () => {
     expect(description.lines.some((line) => line.includes('平织 6 行'))).toBe(true)
   })
 
+  it('任意图形的外侧加减针使用中性边界名称', () => {
+    const path: PathShape = {
+      id: 'tapered-shape',
+      type: 'path',
+      closed: true,
+      nodes: [
+        { anchor: { x: 0, y: 0 } },
+        { anchor: { x: 12, y: 0 } },
+        { anchor: { x: 9, y: 10 } },
+        { anchor: { x: 3, y: 10 } },
+      ],
+    }
+    const segments = getShapeBoundarySegments(path)
+    const descriptions = [segments[1]!, segments[3]!].map((segment) =>
+      describeBoundarySegmentShaping(
+        segment,
+        'bottom-up',
+        { stitchWidthCm: 1, rowHeightCm: 1, stitchesPerCm: 1, rowsPerCm: 1 },
+        { widthCm: 12, heightCm: 12 },
+        { mode: 'center', symmetryOptimization: true },
+        6,
+      ),
+    )
+    const lines = descriptions.flatMap((description) => description.lines)
+
+    expect(lines.some((line) => line.includes('左侧边界塑形'))).toBe(true)
+    expect(lines.some((line) => line.includes('右侧边界塑形'))).toBe(true)
+    expect(lines.every((line) => !line.includes('袖窿'))).toBe(true)
+  })
+
   it('开放曲线不再被当成织片', () => {
     const path: PathShape = {
       id: 'open', type: 'path', closed: false,

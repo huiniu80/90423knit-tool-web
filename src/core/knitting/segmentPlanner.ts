@@ -225,7 +225,11 @@ export function describeBoundarySegmentShaping(
     (sum, step) => sum + step.stitchCount * step.repeatCount,
     0,
   )
-  const outerTitle = edge === 'left-outer' ? '左袖窿' : edge === 'right-outer' ? '右袖窿' : null
+  const outerTitle = edge === 'left-outer'
+    ? '左侧边界塑形'
+    : edge === 'right-outer'
+      ? '右侧边界塑形'
+      : null
   const lines = numberedSteps.length
     ? [
         `${outerTitle ?? (edges.length > 1 ? '圆领塑形' : shortEdgeLabels[edge])} · 按 ${orderText} 编织`,
