@@ -1637,13 +1637,13 @@ defineExpose({ fitCanvas, exportCanvas })
             }" />
             <v-text :config="{
               x: 10, y: 29, width: label.width - 20, height: 15, text: label.formula,
-              fill: '#59645e', fontSize: label.width < 240 ? 9 : 10.5, listening: false,
+              fill: '#3f4c46', fontSize: label.width < 240 ? 10.5 : 12, listening: false,
             }" />
             <template v-if="!label.result.confirmed">
               <v-text :config="{
                 x: 10, y: 46, width: label.width - 20, height: 14,
                 text: '取整待确认 · 将应用到本织片所有' + (label.result.axis === 'stitches' ? '横向' : '纵向') + '尺寸',
-                fill: '#a24c35', fontSize: label.width < 240 ? 8.5 : 10,
+                fill: '#963c29', fontSize: label.width < 240 ? 10 : 11.5,
                 fontStyle: 'bold', listening: false,
               }" />
               <v-group v-for="(roundingDirection, optionIndex) in (['floor', 'ceil'] as const)"
@@ -1661,7 +1661,7 @@ defineExpose({ fitCanvas, exportCanvas })
                   name: dimensionTargetName(label.result, roundingDirection),
                   x: 4, y: 4, width: (label.width - 20) / 2 - 8, height: 32,
                   text: dimensionOptionText(label.result, roundingDirection),
-                  fill: '#35433d', fontSize: label.width < 240 ? 8 : 9.5,
+                  fill: '#263a33', fontSize: label.width < 240 ? 9.5 : 10.5,
                   lineHeight: 1.25, align: 'center',
                 }" />
               </v-group>
@@ -1670,7 +1670,7 @@ defineExpose({ fitCanvas, exportCanvas })
               x: 10, y: 46, width: label.width - 20, height: 12,
               text: label.result.exact ? '精确整数' : '实际 ' + formatCm(label.result.selected!.actualCm) + 'cm · 偏差 ' + formatDeviation(label.result.selected!.deviationCm),
               fill: label.result.exact ? '#52756b' : '#87592f',
-              fontSize: label.width < 240 ? 8.5 : 10, listening: false,
+              fontSize: label.width < 240 ? 10 : 11.5, listening: false,
             }" />
           </v-group>
         </template>
