@@ -152,6 +152,53 @@ describe('Editor Store', () => {
     expect(store.fabricGrid.columnCount).toBe(20)
   })
 
+  it('超限候选值在写入前被拒绝且不产生撤销记录', () => {
+    const store = useEditorStore()
+    const originalGauge = { ...store.gaugeInput }
+
+    const result = store.setGaugeInputValue('sampleStitches', 5_000)
+
+    expect(result.ok).toBe(false)
+    expect(result.assessment.status).toBe('blocked')
+    expect(store.gaugeInput).toEqual(originalGauge)
+    expect(store.canUndo).toBe(false)
+  })
+
+  it('异常但安全的编织密度会警告并允许保存', () => {
+    const store = useEditorStore()
+
+    const result = store.setGaugeInputValue('sampleStitches', 110)
+
+    expect(result.ok).toBe(true)
+    expect(result.assessment.status).toBe('warning')
+    expect(store.gaugeInput.sampleStitches).toBe(110)
+  })
+
+  it('保留超限旧方案、暂停栅格化，并允许分步修复', () => {
+    const storage = new MemoryStorage()
+    storage.setItem(EDITOR_STORAGE_KEY, JSON.stringify({
+      version: 1,
+      savedAt: '2026-08-30T00:00:00.000Z',
+      gaugeInput: { sampleStitches: 5_000, sampleRows: 5_000, sampleWidthCm: 10, sampleHeightCm: 10 },
+      fabric: { widthCm: 60, heightCm: 70 },
+      shapes: [{ id: 'legacy-shape', type: 'rectangle', x: 0, y: 0, widthCm: 10, heightCm: 10 }],
+      shapeDirections: {},
+      rasterOptions: { mode: 'center', symmetryOptimization: true },
+      selectedShapeId: 'legacy-shape',
+      selectedPlanShapeId: 'legacy-shape',
+    }))
+    stubBrowser(storage)
+    const store = useEditorStore()
+
+    expect(store.gridAssessment.status).toBe('blocked')
+    expect(store.rasterRows).toEqual([])
+    expect(store.setGaugeInputValue('sampleStitches', 10).ok).toBe(true)
+    expect(store.gridAssessment.status).toBe('blocked')
+    expect(store.setGaugeInputValue('sampleRows', 10).ok).toBe(true)
+    expect(store.gridAssessment.status).toBe('valid')
+    expect(store.rasterRows.length).toBeGreaterThan(0)
+  })
+
   it('创建图形可撤销和重做', () => {
     const store = useEditorStore()
     const initialCount = store.shapes.length
@@ -642,6 +689,23 @@ describe('Editor Store', () => {
     expect(store.importProject(file, true)).toEqual({ status: 'storage-error' })
     expect(store.projects).toHaveLength(1)
     expect(store.activeProject?.name).toBe('未命名方案 1')
+  })
+
+  it('导入超限方案时返回具体网格原因且不修改方案库', () => {
+    const storage = new MemoryStorage()
+    stubBrowser(storage)
+    const store = useEditorStore()
+    const file = store.createProjectExport()!
+    file.project.document.gaugeInput.sampleStitches = 5_000
+
+    const result = store.importProject(file)
+
+    expect(result.status).toBe('grid-limit')
+    if (result.status === 'grid-limit') {
+      expect(result.assessment.status).toBe('blocked')
+      expect(result.assessment.issues.some((issue) => issue.severity === 'error')).toBe(true)
+    }
+    expect(store.projects).toHaveLength(1)
   })
 
   it('删除当前方案后打开最近修改方案，且不允许删除最后一份', () => {

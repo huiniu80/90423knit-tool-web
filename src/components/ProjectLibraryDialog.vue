@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { calculateFabricGrid, calculateGauge } from '../core/gauge/gauge'
+import { assessGrid } from '../core/gauge/gridConstraints'
 import { useEditorStore } from '../stores/editor'
 import type { PersistedProject } from '../stores/editor.persistence'
 import type { ExportedProjectFileV1 } from '../stores/projectTransfer'
@@ -106,6 +107,8 @@ function handleImportResult(result: ReturnType<typeof store.importProject>): voi
     emit('close')
   } else if (result.status === 'storage-error') {
     transferMessage.value = '导入失败：浏览器本地保存不可用，原方案未被替换。'
+  } else if (result.status === 'grid-limit') {
+    transferMessage.value = `导入失败：${result.assessment.issues.find((issue) => issue.severity === 'error')?.message ?? '方案网格超过安全上限。'}`
   } else if (result.status === 'draft') {
     transferMessage.value = '已取消导入，未完成的路径草稿仍然保留。'
   } else {
@@ -129,6 +132,15 @@ async function importSelectedFile(event: Event): Promise<void> {
   const parsed = parseProjectFile(serialized)
   if (!parsed.ok) {
     transferMessage.value = importErrorMessage(parsed.reason)
+    return
+  }
+
+  const importedAssessment = assessGrid(
+    parsed.file.project.document.gaugeInput,
+    parsed.file.project.document.fabric,
+  )
+  if (importedAssessment.status === 'blocked') {
+    transferMessage.value = `导入失败：${importedAssessment.issues.find((issue) => issue.severity === 'error')?.message ?? '方案网格超过安全上限。'}`
     return
   }
 

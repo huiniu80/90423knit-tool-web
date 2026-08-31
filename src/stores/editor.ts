@@ -1,6 +1,8 @@
 import { computed, onScopeDispose, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { calculateFabricGrid, calculateGauge } from '../core/gauge/gauge'
+import { assessGrid } from '../core/gauge/gridConstraints'
+import type { GridAssessment } from '../core/gauge/gridConstraints'
 import {
   createShapeDimensionResults,
   selectedShapeCounts,
@@ -44,7 +46,12 @@ import type { ExportedProjectFileV1 } from './projectTransfer'
 
 export type ProjectImportResult =
   | { status: 'imported'; projectId: string }
+  | { status: 'grid-limit'; assessment: GridAssessment }
   | { status: 'capacity' | 'draft' | 'not-found' | 'storage-error' }
+
+export type GridUpdateResult =
+  | { ok: true; assessment: GridAssessment }
+  | { ok: false; assessment: GridAssessment }
 
 function clonePlain<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -197,6 +204,7 @@ export const useEditorStore = defineStore('editor', () => {
 
   const gauge = computed(() => calculateGauge(gaugeInput.value))
   const fabricGrid = computed(() => calculateFabricGrid(fabric.value, gauge.value))
+  const gridAssessment = computed(() => assessGrid(gaugeInput.value, fabric.value))
   const activeProject = computed(
     () => projects.value.find((project) => project.id === activeProjectId.value) ?? null,
   )
@@ -207,6 +215,9 @@ export const useEditorStore = defineStore('editor', () => {
     () => shapes.value.find((shape) => shape.id === selectedShapeId.value) ?? null,
   )
   const shapeRasterRows = computed(() => {
+    if (gridAssessment.value.status === 'blocked') {
+      return shapes.value.map((shape) => ({ shape, rows: [] as RasterRow[], isFabric: isFabricShape(shape) }))
+    }
     const rasterKey = [
       gauge.value.stitchWidthCm,
       gauge.value.rowHeightCm,
@@ -247,11 +258,13 @@ export const useEditorStore = defineStore('editor', () => {
       return { shape, rows, isFabric }
     })
   })
-  const rasterRows = computed(() => mergeRasterRows(
-    shapeRasterRows.value.filter((item) => item.isFabric).map((item) => item.rows),
-    gauge.value,
-    fabric.value,
-  ))
+  const rasterRows = computed(() => gridAssessment.value.status === 'blocked'
+    ? []
+    : mergeRasterRows(
+        shapeRasterRows.value.filter((item) => item.isFabric).map((item) => item.rows),
+        gauge.value,
+        fabric.value,
+      ))
   function directionForShape(shapeId: string): KnitDirection {
     return shapeDirections.value[shapeId] ?? 'bottom-up'
   }
@@ -475,16 +488,30 @@ export const useEditorStore = defineStore('editor', () => {
     commitShapeMutation()
   }
 
-  function setGaugeInputValue(key: keyof GaugeInput, value: number): void {
-    if (gaugeInput.value[key] === value) return
+  function setGaugeInputValue(key: keyof GaugeInput, value: number): GridUpdateResult {
+    const nextGaugeInput = { ...gaugeInput.value, [key]: value }
+    const assessment = assessGrid(nextGaugeInput, fabric.value)
+    const fieldInvalid = assessment.issues.some((issue) => issue.severity === 'error' && issue.field === key)
+    if (assessment.status === 'blocked' && (gridAssessment.value.status !== 'blocked' || fieldInvalid)) {
+      return { ok: false, assessment }
+    }
+    if (gaugeInput.value[key] === value) return { ok: true, assessment }
     pushUndo(captureHistorySnapshot())
-    gaugeInput.value = { ...gaugeInput.value, [key]: value }
+    gaugeInput.value = nextGaugeInput
+    return { ok: true, assessment }
   }
 
-  function setFabricValue(key: keyof FabricCanvas, value: number): void {
-    if (fabric.value[key] === value) return
+  function setFabricValue(key: keyof FabricCanvas, value: number): GridUpdateResult {
+    const nextFabric = { ...fabric.value, [key]: value }
+    const assessment = assessGrid(gaugeInput.value, nextFabric)
+    const fieldInvalid = assessment.issues.some((issue) => issue.severity === 'error' && issue.field === key)
+    if (assessment.status === 'blocked' && (gridAssessment.value.status !== 'blocked' || fieldInvalid)) {
+      return { ok: false, assessment }
+    }
+    if (fabric.value[key] === value) return { ok: true, assessment }
     pushUndo(captureHistorySnapshot())
-    fabric.value = { ...fabric.value, [key]: value }
+    fabric.value = nextFabric
+    return { ok: true, assessment }
   }
 
   function setRasterOptions(nextOptions: Partial<RasterOptions>): void {
@@ -812,6 +839,8 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   function importProject(file: ExportedProjectFileV1, discardDraft = false): ProjectImportResult {
+    const assessment = assessGrid(file.project.document.gaugeInput, file.project.document.fabric)
+    if (assessment.status === 'blocked') return { status: 'grid-limit', assessment }
     if (projects.value.length >= MAX_PROJECTS) return { status: 'capacity' }
     if (hasUnfinishedDraft.value && !discardDraft) return { status: 'draft' }
     if (!autoSave.flush()) return { status: 'storage-error' }
@@ -827,6 +856,8 @@ export const useEditorStore = defineStore('editor', () => {
     file: ExportedProjectFileV1,
     discardDraft = false,
   ): ProjectImportResult {
+    const assessment = assessGrid(file.project.document.gaugeInput, file.project.document.fabric)
+    if (assessment.status === 'blocked') return { status: 'grid-limit', assessment }
     if (hasUnfinishedDraft.value && !discardDraft) return { status: 'draft' }
     const index = projects.value.findIndex((project) => project.id === projectId)
     if (index === -1) return { status: 'not-found' }
@@ -948,6 +979,7 @@ export const useEditorStore = defineStore('editor', () => {
     draftTool,
     gauge,
     fabricGrid,
+    gridAssessment,
     selectedShape,
     rasterRows,
     shapePlans,

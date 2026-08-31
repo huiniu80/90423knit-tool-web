@@ -172,6 +172,29 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .fabric-result span, .fabric-result small { display: block; color: #c3d0ca; font-size: var(--type-micro); line-height: 1.35; }
 .fabric-result strong { display: block; margin: 4px 0 2px; color: #fff; font-size: 18px; line-height: 1.35; letter-spacing: .025em; }
 .fabric-result strong i { padding: 0 4px; color: #e2ab4a; font-style: normal; font-weight: 400; }
+.grid-assessment-message {
+  margin: 9px 0 0;
+  padding: 8px 10px;
+  border: 1px solid;
+  border-radius: 7px;
+  font-size: var(--type-meta);
+  line-height: 1.45;
+}
+.grid-assessment-message--warning { color: #71531b; background: #fff7e6; border-color: #ead39e; }
+.grid-assessment-message--error { color: #8b392c; background: #fff0ec; border-color: #e5b4aa; }
+.grid-blocked-placeholder {
+  display: grid;
+  place-content: center;
+  min-height: 0;
+  height: 100%;
+  padding: 32px;
+  color: #704036;
+  text-align: center;
+  background: #f4eee5;
+}
+.grid-blocked-placeholder strong { font-size: 20px; }
+.grid-blocked-placeholder p { max-width: 620px; margin: 10px auto 5px; line-height: 1.55; }
+.grid-blocked-placeholder small { color: var(--text-muted); }
 .compact-options { padding-top: 14px; padding-bottom: 14px; }
 .select-label { display: grid; grid-template-columns: 74px 1fr; align-items: center; gap: 8px; }
 .select-label > span { margin: 0; }

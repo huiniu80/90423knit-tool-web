@@ -10,7 +10,7 @@ import { useEditorStore } from '../stores/editor'
 import { loadSidebarExpanded, saveSidebarExpanded } from './editorLayoutPreferences'
 
 const store = useEditorStore()
-const { activeProject, hasUnfinishedDraft, projects, storageStatus } = storeToRefs(store)
+const { activeProject, gridAssessment, hasUnfinishedDraft, projects, storageStatus } = storeToRefs(store)
 const canvasRef = ref<InstanceType<typeof KnittingCanvas> | null>(null)
 const sidebarExpanded = ref(loadSidebarExpanded())
 const projectLibraryOpen = ref(false)
@@ -95,7 +95,12 @@ onBeforeUnmount(() => {
       <section class="workspace">
         <CanvasToolbar :sidebar-expanded="sidebarExpanded" @toggle-sidebar="toggleSidebar"
           @fit="canvasRef?.fitCanvas()" @export="canvasRef?.exportCanvas()" />
-        <KnittingCanvas ref="canvasRef" />
+        <KnittingCanvas v-if="gridAssessment.status !== 'blocked'" ref="canvasRef" />
+        <div v-else class="grid-blocked-placeholder" role="alert">
+          <strong>已暂停生成编织图解</strong>
+          <p>{{ gridAssessment.issues.find((issue) => issue.severity === 'error')?.message }}</p>
+          <small>请在左侧调整小样密度或画布尺寸。方案数据仍会保留。</small>
+        </div>
       </section>
     </main>
     <ProjectLibraryDialog :open="projectLibraryOpen" :replacement-mode="replacementMode"
