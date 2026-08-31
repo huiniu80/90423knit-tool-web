@@ -6,10 +6,12 @@ import { EDITOR_STORAGE_KEY, PROJECT_LIBRARY_STORAGE_KEY } from './editor.persis
 
 class MemoryStorage {
   readonly values = new Map<string, string>()
+  failWrites = false
   getItem(key: string): string | null {
     return this.values.get(key) ?? null
   }
   setItem(key: string, value: string): void {
+    if (this.failWrites) throw new Error('storage full')
     this.values.set(key, value)
   }
   removeItem(key: string): void {
@@ -540,6 +542,71 @@ describe('Editor Store', () => {
     expect(replacementId).not.toBeNull()
     expect(store.projects).toHaveLength(5)
     expect(store.projects.some((project) => project.id === replacedId)).toBe(false)
+  })
+
+  it('导出当前方案再导入时完整保留编辑数据并生成独立同名方案', () => {
+    const storage = new MemoryStorage()
+    stubBrowser(storage)
+    const store = useEditorStore()
+    store.addDefaultShape('rectangle')
+    const shapeId = store.selectedShapeId!
+    store.setGaugeInputValue('sampleStitches', 18)
+    store.setFabricValue('widthCm', 42)
+    store.setRasterOptions({ mode: 'inside' })
+    store.setShapeDirection(shapeId, 'top-down')
+    const sourceProjectId = store.activeProjectId
+    const file = store.createProjectExport()!
+
+    const result = store.importProject(file)
+
+    expect(result.status).toBe('imported')
+    expect(store.projects).toHaveLength(2)
+    expect(store.activeProjectId).not.toBe(sourceProjectId)
+    expect(store.activeProject?.name).toBe('未命名方案 1（导入）')
+    expect(store.shapes).toEqual(file.project.document.shapes)
+    expect(store.gaugeInput).toEqual(file.project.document.gaugeInput)
+    expect(store.fabric).toEqual(file.project.document.fabric)
+    expect(store.rasterOptions).toEqual(file.project.document.rasterOptions)
+    expect(store.shapeDirections).toEqual(file.project.document.shapeDirections)
+    expect(store.canUndo).toBe(false)
+  })
+
+  it('导入在容量满时等待选择，被替换项目只有确认后才改变', () => {
+    const storage = new MemoryStorage()
+    stubBrowser(storage)
+    const store = useEditorStore()
+    store.addDefaultShape('circle')
+    const file = store.createProjectExport()!
+    for (let index = 0; index < 4; index += 1) store.createProject()
+    const originalIds = store.projects.map((project) => project.id)
+
+    expect(store.importProject(file)).toEqual({ status: 'capacity' })
+    expect(store.projects.map((project) => project.id)).toEqual(originalIds)
+
+    const replacedId = originalIds[0]
+    expect(store.replaceWithImportedProject(replacedId, file).status).toBe('imported')
+    expect(store.projects).toHaveLength(5)
+    expect(store.projects.some((project) => project.id === replacedId)).toBe(false)
+    expect(store.activeProject?.name).toBe(file.project.name)
+    expect(store.shapes[0]?.type).toBe('circle')
+  })
+
+  it('未完成草稿阻止导入，存储失败时也不修改方案库', () => {
+    const storage = new MemoryStorage()
+    stubBrowser(storage)
+    const store = useEditorStore()
+    store.addDefaultShape('rectangle')
+    const file = store.createProjectExport()!
+    store.addDraftPathNode({ anchor: { x: 2, y: 2 } })
+
+    expect(store.importProject(file)).toEqual({ status: 'draft' })
+    expect(store.projects).toHaveLength(1)
+    expect(store.draftPathNodes).toHaveLength(1)
+
+    storage.failWrites = true
+    expect(store.importProject(file, true)).toEqual({ status: 'storage-error' })
+    expect(store.projects).toHaveLength(1)
+    expect(store.activeProject?.name).toBe('未命名方案 1')
   })
 
   it('删除当前方案后打开最近修改方案，且不允许删除最后一份', () => {

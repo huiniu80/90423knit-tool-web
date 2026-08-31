@@ -30,6 +30,12 @@ import type {
   PersistedProject,
   PersistedProjectLibrary,
 } from './editor.persistence'
+import { createProjectFile } from './projectTransfer'
+import type { ExportedProjectFileV1 } from './projectTransfer'
+
+export type ProjectImportResult =
+  | { status: 'imported'; projectId: string }
+  | { status: 'capacity' | 'draft' | 'not-found' | 'storage-error' }
 
 function clonePlain<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -677,6 +683,89 @@ export const useEditorStore = defineStore('editor', () => {
     }
   }
 
+  function uniqueImportedProjectName(sourceName: string, excludedProjectId?: string): string {
+    const names = new Set(projects.value
+      .filter((project) => project.id !== excludedProjectId)
+      .map((project) => project.name))
+    const normalized = sourceName.trim().slice(0, 40) || '导入方案'
+    if (!names.has(normalized)) return normalized
+
+    let index = 1
+    while (true) {
+      const suffix = index === 1 ? '（导入）' : `（导入 ${index}）`
+      const candidate = `${normalized.slice(0, Math.max(1, 40 - suffix.length))}${suffix}`
+      if (!names.has(candidate)) return candidate
+      index += 1
+    }
+  }
+
+  function makeImportedProject(
+    file: ExportedProjectFileV1,
+    excludedProjectId?: string,
+  ): PersistedProject {
+    const now = new Date().toISOString()
+    const document = clonePlain(file.project.document)
+    document.savedAt = now
+    return {
+      id: createId(),
+      name: uniqueImportedProjectName(file.project.name, excludedProjectId),
+      createdAt: now,
+      updatedAt: now,
+      document,
+    }
+  }
+
+  function persistAndActivateProjects(nextProjects: PersistedProject[], project: PersistedProject): boolean {
+    const nextLibrary: PersistedProjectLibrary = {
+      version: PROJECT_LIBRARY_VERSION,
+      activeProjectId: project.id,
+      projects: clonePlain(nextProjects),
+    }
+    if (!saveProjectLibrary(nextLibrary, storage)) {
+      storageStatus.value = 'error'
+      return false
+    }
+    projects.value = nextProjects
+    activeProjectId.value = project.id
+    applyProjectDocument(project.document)
+    storageStatus.value = 'saved'
+    return true
+  }
+
+  function createProjectExport(projectId = activeProjectId.value): ExportedProjectFileV1 | null {
+    if (projectId === activeProjectId.value) autoSave.flush()
+    const project = projects.value.find((item) => item.id === projectId)
+    return project ? createProjectFile(project) : null
+  }
+
+  function importProject(file: ExportedProjectFileV1, discardDraft = false): ProjectImportResult {
+    if (projects.value.length >= MAX_PROJECTS) return { status: 'capacity' }
+    if (hasUnfinishedDraft.value && !discardDraft) return { status: 'draft' }
+    if (!autoSave.flush()) return { status: 'storage-error' }
+    const project = makeImportedProject(file)
+    const nextProjects = [...clonePlain(projects.value), project]
+    return persistAndActivateProjects(nextProjects, project)
+      ? { status: 'imported', projectId: project.id }
+      : { status: 'storage-error' }
+  }
+
+  function replaceWithImportedProject(
+    projectId: string,
+    file: ExportedProjectFileV1,
+    discardDraft = false,
+  ): ProjectImportResult {
+    if (hasUnfinishedDraft.value && !discardDraft) return { status: 'draft' }
+    const index = projects.value.findIndex((project) => project.id === projectId)
+    if (index === -1) return { status: 'not-found' }
+    if (!autoSave.flush()) return { status: 'storage-error' }
+    const project = makeImportedProject(file, projectId)
+    const nextProjects = clonePlain(projects.value)
+    nextProjects.splice(index, 1, project)
+    return persistAndActivateProjects(nextProjects, project)
+      ? { status: 'imported', projectId: project.id }
+      : { status: 'storage-error' }
+  }
+
   function activateProject(projectId: string, discardDraft = false): boolean {
     if (projectId === activeProjectId.value) return true
     if (hasUnfinishedDraft.value && !discardDraft) return false
@@ -817,6 +906,9 @@ export const useEditorStore = defineStore('editor', () => {
     replaceProject,
     renameProject,
     deleteProject,
+    createProjectExport,
+    importProject,
+    replaceWithImportedProject,
     undo,
     redo,
   }

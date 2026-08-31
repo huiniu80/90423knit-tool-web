@@ -322,8 +322,14 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .project-dialog > header { padding: 22px 24px 18px; display: flex; align-items: flex-start; border-bottom: 1px solid var(--line); }
 .project-dialog h2 { margin: 0; color: var(--ink); font-size: 20px; }
 .project-dialog header p { margin: 5px 0 0; color: #77756e; font-size: 10px; }
+.project-dialog-actions { margin-left: auto; display: flex; align-items: center; }
+.import-project-button { height: 34px; padding: 0 13px; border: 1px solid #72978c; border-radius: 7px; color: #315f53; background: #e4efeb; cursor: pointer; font-size: 10px; font-weight: 700; }
+.import-project-button:hover { border-color: #4f7f72; background: #d8e9e3; }
+.visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; overflow: hidden !important; clip: rect(0,0,0,0) !important; white-space: nowrap !important; border: 0 !important; }
 .dialog-close { width: 34px; height: 34px; margin-left: auto; border: 0; border-radius: 50%; color: #69716c; background: #e9e4da; cursor: pointer; font-size: 22px; line-height: 1; }
 .dialog-close:hover { color: var(--rust); background: #f0ddd7; }
+.project-dialog-actions + .dialog-close { margin-left: 10px; }
+.project-transfer-message { margin: 0; padding: 9px 24px; border-bottom: 1px solid #d9d1c4; color: #46665d; background: #edf4f1; font-size: 10px; }
 .project-list { min-height: 0; padding: 18px 20px 22px; display: grid; gap: 12px; overflow-y: auto; }
 .project-card {
   min-width: 0;
@@ -398,6 +404,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   .project-dialog-backdrop { padding: 12px; }
   .project-dialog { max-height: calc(100vh - 24px); }
   .project-dialog > header { padding: 18px; }
+  .project-dialog-actions { margin-left: 12px; }
   .project-list { padding: 12px; }
   .project-card { grid-template-columns: 105px minmax(0, 1fr); gap: 11px; padding: 10px; }
   .project-thumbnail { height: 102px; }

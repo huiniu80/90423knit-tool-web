@@ -130,10 +130,14 @@ function isOptionalId(value: unknown): value is string | null {
   return value === null || typeof value === 'string'
 }
 
+function isValidTimestamp(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && !Number.isNaN(Date.parse(value))
+}
+
 export function isPersistedEditorDocument(value: unknown): value is PersistedEditorDocument {
   if (!isRecord(value)
     || value.version !== EDITOR_DOCUMENT_VERSION
-    || typeof value.savedAt !== 'string'
+    || !isValidTimestamp(value.savedAt)
     || !isGaugeInput(value.gaugeInput)
     || !isFabric(value.fabric)
     || !Array.isArray(value.shapes)
@@ -150,8 +154,8 @@ function isPersistedProject(value: unknown): value is PersistedProject {
   return isRecord(value)
     && typeof value.id === 'string' && value.id.length > 0
     && typeof value.name === 'string' && value.name.trim().length > 0
-    && typeof value.createdAt === 'string'
-    && typeof value.updatedAt === 'string'
+    && isValidTimestamp(value.createdAt)
+    && isValidTimestamp(value.updatedAt)
     && isPersistedEditorDocument(value.document)
 }
 
