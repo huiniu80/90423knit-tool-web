@@ -18,13 +18,13 @@ import {
 import { getShapeBounds, resizeShapeToBounds, translateShape } from '../core/geometry/geometry'
 import {
   bendPathSegmentWithSymmetry,
-  detectPathSymmetry,
   evaluatePathSegment,
   findNearestOpenPathEndpoint,
   findNearestPathPosition,
   flattenPath,
   movePathControlWithSymmetry,
   movePathNodeWithSymmetry,
+  pathConstraintSymmetry,
   pathSegmentCount,
   removePathNodeWithSymmetry,
   splitPathSegmentWithSymmetry,
@@ -756,6 +756,15 @@ const selectionRect = computed(() => {
   }
 })
 
+const mirrorAxisLine = computed(() => {
+  const shape = selectedShape.value
+  if (shape?.type !== 'path' || !shape.editConstraint || activeTool.value !== 'select') return null
+  const bounds = getShapeBounds(shape)
+  const top = toCanvasPoint({ x: shape.editConstraint.axisX, y: bounds.y + bounds.height })
+  const bottom = toCanvasPoint({ x: shape.editConstraint.axisX, y: bounds.y })
+  return { points: [top.x, top.y - 12, bottom.x, bottom.y + 12] }
+})
+
 const resizeHandles = computed(() => {
   const rect = selectionRect.value
   if (!rect) return []
@@ -1022,11 +1031,7 @@ function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
       kind: 'path-anchor',
       nodeIndex,
       shape,
-      symmetry: detectPathSymmetry(
-        shape,
-        gauge.value.stitchWidthCm * 0.55,
-        gauge.value.stitchWidthCm / 2,
-      ),
+      symmetry: pathConstraintSymmetry(shape),
     }
     return
   }
@@ -1042,11 +1047,7 @@ function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
       nodeIndex,
       control: control as 'inControl' | 'outControl',
       shape,
-      symmetry: detectPathSymmetry(
-        shape,
-        gauge.value.stitchWidthCm * 0.55,
-        gauge.value.stitchWidthCm / 2,
-      ),
+      symmetry: pathConstraintSymmetry(shape),
     }
     return
   }
@@ -1060,11 +1061,7 @@ function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
       kind: 'path-midpoint',
       segmentIndex,
       shape,
-      symmetry: detectPathSymmetry(
-        shape,
-        gauge.value.stitchWidthCm * 0.55,
-        gauge.value.stitchWidthCm / 2,
-      ),
+      symmetry: pathConstraintSymmetry(shape),
     }
     return
   }
@@ -1334,11 +1331,7 @@ function onPointerDoubleClick(event: KonvaEventObject<PointerEvent>): void {
     const nearest = name.startsWith('path-midpoint:')
       ? { segmentIndex: Number(name.split(':')[1]), t: 0.5 }
       : findNearestPathPosition(selectedShape.value, world)
-    const symmetry = detectPathSymmetry(
-      selectedShape.value,
-      gauge.value.stitchWidthCm * 0.55,
-      gauge.value.stitchWidthCm / 2,
-    )
+    const symmetry = pathConstraintSymmetry(selectedShape.value)
     const result = splitPathSegmentWithSymmetry(
       selectedShape.value,
       nearest.segmentIndex,
@@ -1404,11 +1397,7 @@ function onKeyDown(event: KeyboardEvent): void {
         store.deleteSelected()
       } else {
         const shape = clonePlain(selectedShape.value)
-        const symmetry = detectPathSymmetry(
-          shape,
-          gauge.value.stitchWidthCm * 0.55,
-          gauge.value.stitchWidthCm / 2,
-        )
+        const symmetry = pathConstraintSymmetry(shape)
         store.replaceShape(removePathNodeWithSymmetry(
           shape,
           selectedPathNodeIndex.value,
@@ -1593,6 +1582,10 @@ defineExpose({ fitCanvas, exportCanvas })
           </template>
 
           <template v-if="selectionRect">
+            <v-line v-if="mirrorAxisLine" :config="{
+              ...mirrorAxisLine, stroke: '#287d72', strokeWidth: 1.4,
+              dash: [6, 5], opacity: 0.72, listening: false,
+            }" />
             <v-rect :config="{ ...selectionRect, stroke: '#287d72', strokeWidth: 1.3, dash: [5, 4], listening: false }" />
             <v-circle v-for="handle in resizeHandles" :key="handle.corner" :config="{
               name: `resize:${handle.corner}`, x: handle.x, y: handle.y, radius: 5,

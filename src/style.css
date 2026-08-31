@@ -207,6 +207,11 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .empty-property span { font-size: 26px; }
 .empty-property p { margin: 8px 0 0; font-size: var(--type-label); line-height: 1.65; }
 .path-property-block { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.mirror-mode-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; color: #59635e; font-size: var(--type-label); }
+.mirror-source-choice { margin: 0 0 10px; padding: 10px; border: 1px solid #dfc7a0; border-radius: 8px; color: #6c5030; background: #fff5df; font-size: var(--type-label); line-height: 1.45; }
+.mirror-source-choice > div { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.mirror-source-choice button { padding: 5px 8px; border: 1px solid #cfaa6f; border-radius: 6px; color: #6c4327; background: #fffdf8; cursor: pointer; font-size: var(--type-label); }
+.mirror-source-choice button.plain { border-color: transparent; background: transparent; }
 .path-status-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #59635e; font-size: var(--type-label); }
 .symmetry-status { margin-left: auto; padding: 3px 6px; border-radius: 999px; color: #246b61; background: #e2efea; font-size: var(--type-micro); font-weight: 650; white-space: nowrap; }
 .path-status-row button { padding: 6px 10px; border: 1px solid #b9c9c3; border-radius: 6px; color: #246b61; background: #edf4f1; font-size: var(--type-label); }

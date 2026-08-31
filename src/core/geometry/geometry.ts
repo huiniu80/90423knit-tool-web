@@ -99,6 +99,9 @@ export function translateShape(shape: Shape, deltaX: number, deltaY: number): Sh
     case 'path':
       return {
         ...shape,
+        editConstraint: shape.editConstraint
+          ? { ...shape.editConstraint, axisX: shape.editConstraint.axisX + deltaX }
+          : undefined,
         nodes: shape.nodes.map((node) => ({
           anchor: { x: node.anchor.x + deltaX, y: node.anchor.y + deltaY },
           inControl: node.inControl
@@ -151,6 +154,9 @@ export function resizeShapeToBounds(shape: Shape, next: Bounds): Shape {
     case 'path':
       return {
         ...shape,
+        editConstraint: shape.editConstraint
+          ? { ...shape.editConstraint, axisX: resizePoint({ x: shape.editConstraint.axisX, y: current.y }).x }
+          : undefined,
         nodes: shape.nodes.map((node) => ({
           anchor: resizePoint(node.anchor),
           inControl: node.inControl ? resizePoint(node.inControl) : undefined,

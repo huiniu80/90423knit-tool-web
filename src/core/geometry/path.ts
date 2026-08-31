@@ -32,6 +32,8 @@ export interface PathSymmetry {
   pairedNodeIndexes: number[]
 }
 
+export type PathMirrorSource = 'average' | 'left' | 'right'
+
 function pointsMatch(left: Point, right: Point, tolerance: number): boolean {
   return Math.hypot(left.x - right.x, left.y - right.y) <= tolerance
 }
@@ -106,6 +108,7 @@ export function joinConnectedOpenPaths(
   return {
     ...first,
     name: closesLoop ? '自定义闭合路径' : first.name,
+    editConstraint: undefined,
     nodes,
     closed: closesLoop,
   }
@@ -123,52 +126,66 @@ function clonePathNode(node: PathNode): PathNode {
   }
 }
 
-/**
- * 只为已经近似对称的闭合路径建立配对。若任一非中心节点找不到镜像节点，
- * 返回 null，调用方应保持自由编辑，不能擅自覆盖另一侧。
- */
+/** 为路径寻找与遍历方向相反的镜像拓扑；闭合路径会比较所有可能的起点。 */
+function inferPairedNodeIndexes(path: PathShape, axisX: number): number[] | null {
+  const count = path.nodes.length
+  if (count < 2) return null
+  if (!path.closed) return Array.from({ length: count }, (_, index) => count - 1 - index)
+
+  let bestPairs: number[] | null = null
+  let bestScore = Number.POSITIVE_INFINITY
+  for (let offset = 0; offset < count; offset += 1) {
+    const pairs = Array.from({ length: count }, (_, index) => (offset - index + count) % count)
+    let score = 0
+    for (let index = 0; index < count; index += 1) {
+      const node = path.nodes[index]!
+      const paired = path.nodes[pairs[index]!]!
+      const target = mirrorPointAcrossAxis(node.anchor, axisX)
+      score += Math.hypot(paired.anchor.x - target.x, paired.anchor.y - target.y)
+      if (pairs[index] === index) score += Math.abs(node.anchor.x - axisX) * 4
+    }
+    if (score < bestScore) {
+      bestScore = score
+      bestPairs = pairs
+    }
+  }
+  return bestPairs
+}
+
+export function createPathSymmetry(path: PathShape, axisX: number): PathSymmetry | null {
+  const pairedNodeIndexes = inferPairedNodeIndexes(path, axisX)
+  return pairedNodeIndexes ? { axisX, pairedNodeIndexes } : null
+}
+
+export function pathConstraintSymmetry(path: PathShape): PathSymmetry | null {
+  return path.editConstraint
+    ? createPathSymmetry(path, path.editConstraint.axisX)
+    : null
+}
+
 export function detectPathSymmetry(
   path: PathShape,
   tolerance: number,
   axisStep?: number,
 ): PathSymmetry | null {
-  if (!path.closed || path.nodes.length < 3) return null
+  if (path.nodes.length < (path.closed ? 3 : 2)) return null
   const bounds = getPathBounds(path)
   const rawAxisX = bounds.x + bounds.width / 2
   const axisX = axisStep && axisStep > 0
     ? Math.round(rawAxisX / axisStep) * axisStep
     : rawAxisX
-  const pairs = Array.from({ length: path.nodes.length }, () => -1)
-  const available = new Set(path.nodes.map((_, index) => index))
-
-  for (let index = 0; index < path.nodes.length; index += 1) {
-    if (pairs[index] !== -1) continue
-    const node = path.nodes[index]!
-    if (Math.abs(node.anchor.x - axisX) <= tolerance) {
-      pairs[index] = index
-      available.delete(index)
-      continue
-    }
-    const target = mirrorPointAcrossAxis(node.anchor, axisX)
-    let match = -1
-    let nearestDistance = Number.POSITIVE_INFINITY
-    for (const candidateIndex of available) {
-      if (candidateIndex === index) continue
-      const candidate = path.nodes[candidateIndex]!
-      const distance = Math.hypot(candidate.anchor.x - target.x, candidate.anchor.y - target.y)
-      if (distance <= tolerance && distance < nearestDistance) {
-        match = candidateIndex
-        nearestDistance = distance
-      }
-    }
-    if (match === -1) return null
-    pairs[index] = match
-    pairs[match] = index
-    available.delete(index)
-    available.delete(match)
-  }
-
-  return { axisX, pairedNodeIndexes: pairs }
+  const symmetry = createPathSymmetry(path, axisX)
+  if (!symmetry) return null
+  const matches = path.nodes.every((node, index) => {
+    const pairedIndex = symmetry.pairedNodeIndexes[index]
+    if (pairedIndex === undefined) return false
+    const paired = path.nodes[pairedIndex]!
+    return Math.hypot(
+      paired.anchor.x - (axisX * 2 - node.anchor.x),
+      paired.anchor.y - node.anchor.y,
+    ) <= tolerance
+  })
+  return matches ? symmetry : null
 }
 
 function averagePoint(first: Point, second: Point): Point {
@@ -239,6 +256,72 @@ export function normalizePathWithSymmetry(
       : undefined
   })
   return { ...path, nodes }
+}
+
+export function enablePathMirror(
+  path: PathShape,
+  source: PathMirrorSource,
+  axisStep?: number,
+): PathShape {
+  const bounds = getPathBounds(path)
+  const rawAxisX = bounds.x + bounds.width / 2
+  const axisX = axisStep && axisStep > 0
+    ? Math.round(rawAxisX / axisStep) * axisStep
+    : rawAxisX
+  const symmetry = createPathSymmetry(path, axisX)
+  if (!symmetry) return path
+  if (source === 'average') {
+    return {
+      ...normalizePathWithSymmetry(path, symmetry),
+      editConstraint: { type: 'vertical-mirror', axisX },
+    }
+  }
+
+  const nodes = path.nodes.map(clonePathNode)
+  const visited = new Set<number>()
+  nodes.forEach((node, index) => {
+    if (visited.has(index)) return
+    const pairedIndex = symmetry.pairedNodeIndexes[index]
+    if (pairedIndex === undefined) return
+    visited.add(index)
+    visited.add(pairedIndex)
+    if (pairedIndex === index) {
+      node.anchor.x = axisX
+      const controls = ([
+        ['inControl', node.inControl],
+        ['outControl', node.outControl],
+      ] as const).filter((entry): entry is ['inControl' | 'outControl', Point] => Boolean(entry[1]))
+      const preferred = controls.find(([, point]) => source === 'left'
+        ? point.x <= axisX
+        : point.x >= axisX) ?? controls[0]
+      if (!preferred) {
+        node.inControl = undefined
+        node.outControl = undefined
+        return
+      }
+      const [control, point] = preferred
+      const pairedControl = control === 'inControl' ? 'outControl' : 'inControl'
+      node[control] = { ...point }
+      node[pairedControl] = mirrorPointAcrossAxis(point, axisX)
+      return
+    }
+    const paired = nodes[pairedIndex]!
+    const sourceIndex = source === 'left'
+      ? (node.anchor.x <= paired.anchor.x ? index : pairedIndex)
+      : (node.anchor.x >= paired.anchor.x ? index : pairedIndex)
+    const targetIndex = sourceIndex === index ? pairedIndex : index
+    const sourceNode = nodes[sourceIndex]!
+    nodes[targetIndex] = {
+      anchor: mirrorPointAcrossAxis(sourceNode.anchor, axisX),
+      inControl: sourceNode.outControl
+        ? mirrorPointAcrossAxis(sourceNode.outControl, axisX)
+        : undefined,
+      outControl: sourceNode.inControl
+        ? mirrorPointAcrossAxis(sourceNode.inControl, axisX)
+        : undefined,
+    }
+  })
+  return { ...path, nodes, editConstraint: { type: 'vertical-mirror', axisX } }
 }
 
 export function movePathNodeWithSymmetry(

@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { getHorizontalIntervals, getShapeBounds, resizeShapeToBounds } from './geometry'
+import { getHorizontalIntervals, getShapeBounds, resizeShapeToBounds, translateShape } from './geometry'
 import {
   bendPathSegment,
   bendPathSegmentWithSymmetry,
   detectPathSymmetry,
+  enablePathMirror,
   evaluatePathSegment,
   findNearestOpenPathEndpoint,
   flattenPath,
   movePathControlWithSymmetry,
   movePathNodeWithSymmetry,
+  pathConstraintSymmetry,
   removePathNodeWithSymmetry,
   splitPathSegment,
   splitPathSegmentWithSymmetry,
@@ -275,6 +277,30 @@ describe('Geometry Engine', () => {
 
     const moved = movePathNodeWithSymmetry(path, 2, { x: 9, y: 6 }, symmetry)
     expect(moved.nodes[8]?.anchor).toEqual({ x: 0.8, y: 6 })
+  })
+
+  it('显式开启镜像后以指定侧重建轮廓且不再依赖近似检测', () => {
+    const path = symmetricGarmentPath()
+    path.nodes[8]!.anchor = { x: 1.5, y: 5.5 }
+    expect(detectPathSymmetry(path, 0.01)).toBeNull()
+
+    const constrained = enablePathMirror(path, 'right', 0.25)
+    expect(constrained.editConstraint).toEqual({ type: 'vertical-mirror', axisX: 5 })
+    expect(constrained.nodes[8]?.anchor).toEqual({ x: 0, y: 6 })
+
+    const symmetry = pathConstraintSymmetry(constrained)
+    const moved = movePathNodeWithSymmetry(constrained, 2, { x: 9, y: 6.5 }, symmetry)
+    expect(moved.nodes[8]?.anchor).toEqual({ x: 1, y: 6.5 })
+    expect(moved.editConstraint).toEqual(constrained.editConstraint)
+  })
+
+  it('移动和缩放镜像路径时同步变换中心轴', () => {
+    const constrained = enablePathMirror(symmetricGarmentPath(), 'average')
+    const translated = translateShape(constrained, 3, 2)
+    expect(translated.type === 'path' && translated.editConstraint?.axisX).toBe(8)
+
+    const resized = resizeShapeToBounds(translated, { x: 10, y: 4, width: 20, height: 16 })
+    expect(resized.type === 'path' && resized.editConstraint?.axisX).toBe(20)
   })
 })
 

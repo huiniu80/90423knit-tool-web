@@ -57,10 +57,16 @@ export interface PathNode {
   outControl?: Point
 }
 
+export interface VerticalMirrorConstraint {
+  type: 'vertical-mirror'
+  axisX: number
+}
+
 export interface PathShape extends BaseShape {
   type: 'path'
   nodes: PathNode[]
   closed: boolean
+  editConstraint?: VerticalMirrorConstraint
 }
 
 export type Shape =

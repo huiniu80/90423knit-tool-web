@@ -84,7 +84,7 @@ function libraryFixture(): PersistedProjectLibrary {
 afterEach(() => vi.useRealTimers())
 
 describe('编辑器本地持久化', () => {
-  it('将 v1 文档迁移为双轴均未确认的 v2 文档', () => {
+  it('将 v1 文档迁移为当前文档版本', () => {
     const storage = new MemoryStorage()
     const legacy = { ...documentFixture(), version: 1 }
     delete (legacy as Partial<PersistedEditorDocument>).shapeRoundingPolicies
@@ -93,6 +93,33 @@ describe('编辑器本地持久化', () => {
     expect(loadEditorDocument(storage)).toMatchObject({
       version: EDITOR_DOCUMENT_VERSION,
       shapeRoundingPolicies: {},
+    })
+  })
+
+  it('迁移 v2 文档时固定原有的自动对称编辑状态', () => {
+    const storage = new MemoryStorage()
+    const legacy = {
+      ...documentFixture(),
+      version: 2,
+      shapes: [{
+        id: 'neckline', type: 'path', closed: false,
+        nodes: [
+          { anchor: { x: 5, y: 10 } },
+          { anchor: { x: 10, y: 6 } },
+          { anchor: { x: 15, y: 10 } },
+        ],
+      }],
+      shapeDirections: {},
+      shapeRoundingPolicies: {},
+      selectedShapeId: 'neckline',
+      selectedPlanShapeId: 'neckline',
+    }
+    storage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(legacy))
+
+    const loaded = loadEditorDocument(storage)
+    expect(loaded?.version).toBe(EDITOR_DOCUMENT_VERSION)
+    expect(loaded?.shapes[0]).toMatchObject({
+      editConstraint: { type: 'vertical-mirror', axisX: 10 },
     })
   })
 

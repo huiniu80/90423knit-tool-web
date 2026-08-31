@@ -4,11 +4,12 @@ import type { KnitDirection } from '../core/knitting/planner.types'
 import type { RasterOptions } from '../core/raster/raster.types'
 import type { ViewMode } from './editor.types'
 import type { ShapeRoundingPolicy } from '../core/dimensions/dimensionConversion'
+import { detectPathSymmetry, enablePathMirror } from '../core/geometry/path'
 
 /** Legacy single-document key. Kept only for one-time migration. */
 export const EDITOR_STORAGE_KEY = 'knitting-pattern-planner:editor:v1'
 export const PROJECT_LIBRARY_STORAGE_KEY = 'knitting-pattern-planner:projects:v1'
-export const EDITOR_DOCUMENT_VERSION = 2
+export const EDITOR_DOCUMENT_VERSION = 3
 export const PROJECT_LIBRARY_VERSION = 1
 export const MAX_PROJECTS = 5
 export const EDITOR_AUTOSAVE_DELAY_MS = 300
@@ -102,6 +103,7 @@ function isShape(value: unknown): value is Shape {
         && value.nodes.length >= (value.closed === true ? 3 : 2)
         && value.nodes.every(isPathNode)
         && typeof value.closed === 'boolean'
+        && isPathEditConstraint(value.editConstraint)
     default:
       return false
   }
@@ -122,6 +124,14 @@ function isFabric(value: unknown): value is FabricCanvas {
 function isShapeDirections(value: unknown): value is Record<string, KnitDirection> {
   return isRecord(value) && Object.values(value).every(
     (direction) => direction === 'bottom-up' || direction === 'top-down',
+  )
+}
+
+function isPathEditConstraint(value: unknown): boolean {
+  return value === undefined || (
+    isRecord(value)
+    && value.type === 'vertical-mirror'
+    && isFiniteNumber(value.axisX)
   )
 }
 
@@ -173,10 +183,27 @@ export function isPersistedEditorDocument(value: unknown): value is PersistedEdi
 
 export function migrateEditorDocument(value: unknown): PersistedEditorDocument | null {
   if (!isRecord(value)) return null
-  if (value.version === 1) {
-    value = { ...value, version: EDITOR_DOCUMENT_VERSION, shapeRoundingPolicies: {} }
+  let migrated: Record<string, unknown> = value
+  if (migrated.version === 1) {
+    migrated = { ...migrated, version: 2, shapeRoundingPolicies: {} }
   }
-  return isPersistedEditorDocument(value) ? value : null
+  if (migrated.version === 2 && Array.isArray(migrated.shapes) && isRecord(migrated.gaugeInput)) {
+    const stitchWidthCm = isPositiveNumber(migrated.gaugeInput.sampleWidthCm)
+      && isPositiveNumber(migrated.gaugeInput.sampleStitches)
+      ? migrated.gaugeInput.sampleWidthCm / migrated.gaugeInput.sampleStitches
+      : 0
+    const shapes = migrated.shapes.map((shape: unknown) => {
+      if (!isRecord(shape) || shape.type !== 'path' || !stitchWidthCm) return shape
+      const candidate = shape as unknown as Shape
+      if (candidate.type !== 'path') return shape
+      const symmetry = detectPathSymmetry(candidate, stitchWidthCm * 0.55, stitchWidthCm / 2)
+      return symmetry
+        ? enablePathMirror(candidate, 'average', stitchWidthCm / 2)
+        : candidate
+    })
+    migrated = { ...migrated, version: EDITOR_DOCUMENT_VERSION, shapes }
+  }
+  return isPersistedEditorDocument(migrated) ? migrated : null
 }
 
 function isPersistedProject(value: unknown): value is PersistedProject {

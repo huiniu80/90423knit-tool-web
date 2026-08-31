@@ -1,20 +1,19 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { getShapeBounds, resizeShapeToBounds } from '../core/geometry/geometry'
-import { detectPathSymmetry } from '../core/geometry/path'
+import { detectPathSymmetry, enablePathMirror } from '../core/geometry/path'
+import type { PathMirrorSource } from '../core/geometry/path'
 import type { Bounds } from '../core/geometry/shape.types'
 import { useEditorStore } from '../stores/editor'
 
 const store = useEditorStore()
 const { gauge, selectedShape } = storeToRefs(store)
 const bounds = computed(() => selectedShape.value ? getShapeBounds(selectedShape.value) : null)
+const mirrorChoiceShapeId = ref<string | null>(null)
 const hasPathSymmetry = computed(() => selectedShape.value?.type === 'path'
-  && Boolean(detectPathSymmetry(
-    selectedShape.value,
-    gauge.value.stitchWidthCm * 0.55,
-    gauge.value.stitchWidthCm / 2,
-  )))
+  && Boolean(selectedShape.value.editConstraint))
+watch(() => selectedShape.value?.id, () => { mirrorChoiceShapeId.value = null })
 
 const typeLabels = {
   rectangle: '矩形',
@@ -43,6 +42,37 @@ function togglePathClosed(): void {
   if (!selectedShape.value.closed && selectedShape.value.nodes.length < 3) return
   store.replaceShape({ ...selectedShape.value, closed: !selectedShape.value.closed })
 }
+
+function disablePathMirror(): void {
+  if (selectedShape.value?.type !== 'path' || !selectedShape.value.editConstraint) return
+  store.replaceShape({ ...selectedShape.value, editConstraint: undefined })
+  mirrorChoiceShapeId.value = null
+}
+
+function requestPathMirror(): void {
+  if (selectedShape.value?.type !== 'path' || selectedShape.value.editConstraint) return
+  const path = selectedShape.value
+  const symmetry = detectPathSymmetry(
+    path,
+    gauge.value.stitchWidthCm * 0.55,
+    gauge.value.stitchWidthCm / 2,
+  )
+  if (symmetry) {
+    store.replaceShape(enablePathMirror(path, 'average', gauge.value.stitchWidthCm / 2))
+    return
+  }
+  mirrorChoiceShapeId.value = path.id
+}
+
+function confirmPathMirror(source: PathMirrorSource): void {
+  if (selectedShape.value?.type !== 'path') return
+  store.replaceShape(enablePathMirror(
+    selectedShape.value,
+    source,
+    gauge.value.stitchWidthCm / 2,
+  ))
+  mirrorChoiceShapeId.value = null
+}
 </script>
 
 <template>
@@ -69,9 +99,30 @@ function togglePathClosed(): void {
       <p v-if="selectedShape.type === 'polygon'" class="property-tip">双击轮廓边添加节点；选中节点后按 Delete 删除。
       </p>
       <div v-if="selectedShape.type === 'path'" class="path-property-block">
+        <div class="mirror-mode-row">
+          <span>编辑方式</span>
+          <div class="segmented-control compact" aria-label="路径编辑方式">
+            <button type="button" :class="{ active: !hasPathSymmetry }" @click="disablePathMirror">
+              自由编辑
+            </button>
+            <button type="button" :class="{ active: hasPathSymmetry }" @click="requestPathMirror">
+              左右镜像
+            </button>
+          </div>
+        </div>
+        <div v-if="mirrorChoiceShapeId === selectedShape.id" class="mirror-source-choice">
+          <b>当前两侧不一致，请选择保留哪一侧：</b>
+          <div>
+            <button type="button" @click="confirmPathMirror('left')">以左侧为准</button>
+            <button type="button" @click="confirmPathMirror('right')">以右侧为准</button>
+            <button type="button" class="plain" @click="mirrorChoiceShapeId = null">取消</button>
+          </div>
+        </div>
         <div class="path-status-row">
           <span>{{ selectedShape.nodes.length }} 个锚点</span>
-          <b v-if="hasPathSymmetry" class="symmetry-status">左右对称联动</b>
+          <b v-if="hasPathSymmetry" class="symmetry-status">
+            中心 X {{ selectedShape.editConstraint?.axisX.toFixed(2) }} cm
+          </b>
           <button type="button" :disabled="!selectedShape.closed && selectedShape.nodes.length < 3"
             @click="togglePathClosed">
             {{ selectedShape.closed ? '打开路径' : '闭合路径' }}
@@ -80,9 +131,11 @@ function togglePathClosed(): void {
         <p class="property-tip">
           {{ selectedShape.closed
             ? hasPathSymmetry
-              ? '已建立左右节点配对。拖动任一侧会同步镜像，针法在跨过针格后实时更新。'
-              : '闭合路径会参与针格和针法计算。当前轮廓未识别为对称结构，左右保持独立编辑。'
-            : '开放路径会按曲线经过的针格生成独立指令。拖动橙色中点可调整弧线。' }}
+              ? '左右镜像已锁定。拖动锚点、控制柄或曲线时，另一侧会围绕中心轴同步变化。'
+              : '闭合路径会参与针格和针法计算；自由编辑时两侧互不影响。'
+            : hasPathSymmetry
+              ? '开放路径已启用左右镜像，中心节点会保持在中心轴上。'
+              : '开放路径会按曲线经过的针格生成独立指令。拖动橙色中点可调整弧线。' }}
         </p>
       </div>
     </div>
