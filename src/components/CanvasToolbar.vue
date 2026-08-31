@@ -103,9 +103,9 @@ function changeZoom(delta: number): void {
       <span>画布 {{ fabricGrid.columnCount }} 针 × {{ fabricGrid.rowCount }} 行 · 原点在左下角</span>
     </div>
     <div class="segmented-control compact" aria-label="显示模式">
-      <button :class="{ active: viewMode === 'outline' }" @click="viewMode = 'outline'">轮廓</button>
+      <button :class="{ active: viewMode === 'outline' }" @click="viewMode = 'outline'">绘版</button>
       <button :class="{ active: viewMode === 'grid' }" @click="viewMode = 'grid'">针格</button>
-      <button :class="{ active: viewMode === 'overlay' }" @click="viewMode = 'overlay'">对比</button>
+      <button :class="{ active: viewMode === 'overlay' }" @click="viewMode = 'overlay'">量衣</button>
     </div>
     <div class="zoom-control">
       <button type="button" @click="changeZoom(-2)">−</button>
