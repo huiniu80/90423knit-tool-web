@@ -110,7 +110,8 @@ const {
 
 const host = ref<HTMLDivElement | null>(null)
 const stageRef = ref<{ getNode: () => Stage } | null>(null)
-const stageSize = ref({ width: 900, height: 600 })
+const stageSize = ref({ width: 1, height: 1 })
+const canvasReady = ref(false)
 const pan = ref<Point>({ x: 60, y: 40 })
 const interaction = ref<Interaction | null>(null)
 const pathPointer = ref<Point | null>(null)
@@ -121,6 +122,8 @@ const highlightedAnnotationKey = ref<string | null>(null)
 const annotationHovered = ref(false)
 const canvasBackgroundHovered = ref(false)
 let resizeObserver: ResizeObserver | null = null
+let initializationFrameId: number | null = null
+let initializationScheduled = false
 let activePenPointerId: number | null = null
 let touchGesture: TouchGesture | null = null
 const touchPointers = new Map<number, Point>()
@@ -1254,18 +1257,31 @@ onMounted(() => {
   if (!host.value) return
   resizeObserver = new ResizeObserver(([entry]) => {
     if (!entry) return
+    const { width, height } = entry.contentRect
+    if (width <= 0 || height <= 0) return
     stageSize.value = {
-      width: Math.max(1, entry.contentRect.width),
-      height: Math.max(1, entry.contentRect.height),
+      width,
+      height,
     }
-    pan.value = clampPan(pan.value)
+    if (!canvasReady.value && !initializationScheduled) {
+      initializationScheduled = true
+      fitCanvas()
+      nextTick(() => {
+        initializationFrameId = requestAnimationFrame(() => {
+          canvasReady.value = true
+          initializationFrameId = null
+        })
+      })
+    } else {
+      pan.value = clampPan(pan.value)
+    }
   })
   resizeObserver.observe(host.value)
   window.addEventListener('keydown', onWindowKeyDown)
-  nextTick(fitCanvas)
 })
 
 onBeforeUnmount(() => {
+  if (initializationFrameId !== null) cancelAnimationFrame(initializationFrameId)
   if (interactionFrameId !== null) cancelAnimationFrame(interactionFrameId)
   interactionFrameId = null
   pendingInteractionPointer = null
@@ -1298,10 +1314,11 @@ defineExpose({ fitCanvas, exportCanvas })
 
 <template>
   <div ref="host" class="knitting-canvas" tabindex="0" :style="{ cursor: stageCursor }">
-    <v-stage ref="stageRef" :config="{ width: stageSize.width, height: stageSize.height }"
-      @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerEnd"
-      @pointercancel="onPointerEnd" @pointerleave="onPointerLeave"
-      @pointerclick="onStagePointerClick" @pointerdblclick="onPointerDoubleClick" @wheel="onWheel">
+    <div :class="['canvas-stage', { 'canvas-stage--initializing': !canvasReady }]">
+      <v-stage ref="stageRef" :config="{ width: stageSize.width, height: stageSize.height }"
+        @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerEnd"
+        @pointercancel="onPointerEnd" @pointerleave="onPointerLeave"
+        @pointerclick="onStagePointerClick" @pointerdblclick="onPointerDoubleClick" @wheel="onWheel">
       <v-layer>
         <v-group :config="{ x: pan.x, y: pan.y }">
           <v-rect :config="{
@@ -1506,7 +1523,8 @@ defineExpose({ fitCanvas, exportCanvas })
           </v-group>
         </template>
       </v-layer>
-    </v-stage>
+      </v-stage>
+    </div>
 
     <div v-if="viewMode === 'grid' && !selectedGridAnnotationSegment"
       class="canvas-hud canvas-hud--selection-tip">
