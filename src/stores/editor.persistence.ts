@@ -3,8 +3,12 @@ import type { PathNode, Point, Shape } from '../core/geometry/shape.types'
 import type { KnitDirection } from '../core/knitting/planner.types'
 import type { RasterOptions } from '../core/raster/raster.types'
 
+/** Legacy single-document key. Kept only for one-time migration. */
 export const EDITOR_STORAGE_KEY = 'knitting-pattern-planner:editor:v1'
+export const PROJECT_LIBRARY_STORAGE_KEY = 'knitting-pattern-planner:projects:v1'
 export const EDITOR_DOCUMENT_VERSION = 1
+export const PROJECT_LIBRARY_VERSION = 1
+export const MAX_PROJECTS = 5
 export const EDITOR_AUTOSAVE_DELAY_MS = 300
 
 export interface PersistedEditorDocument {
@@ -17,6 +21,20 @@ export interface PersistedEditorDocument {
   rasterOptions: RasterOptions
   selectedShapeId: string | null
   selectedPlanShapeId: string | null
+}
+
+export interface PersistedProject {
+  id: string
+  name: string
+  createdAt: string
+  updatedAt: string
+  document: PersistedEditorDocument
+}
+
+export interface PersistedProjectLibrary {
+  version: typeof PROJECT_LIBRARY_VERSION
+  activeProjectId: string
+  projects: PersistedProject[]
 }
 
 export interface EditorStorage {
@@ -64,24 +82,16 @@ function isShape(value: unknown): value is Shape {
 
   switch (value.type) {
     case 'rectangle':
-      return isFiniteNumber(value.x)
-        && isFiniteNumber(value.y)
-        && isPositiveNumber(value.widthCm)
-        && isPositiveNumber(value.heightCm)
+      return isFiniteNumber(value.x) && isFiniteNumber(value.y)
+        && isPositiveNumber(value.widthCm) && isPositiveNumber(value.heightCm)
     case 'triangle':
-      return Array.isArray(value.points)
-        && value.points.length === 3
-        && value.points.every(isPoint)
+      return Array.isArray(value.points) && value.points.length === 3 && value.points.every(isPoint)
     case 'circle':
       return isPoint(value.center) && isPositiveNumber(value.radiusCm)
     case 'ellipse':
-      return isPoint(value.center)
-        && isPositiveNumber(value.radiusXcm)
-        && isPositiveNumber(value.radiusYcm)
+      return isPoint(value.center) && isPositiveNumber(value.radiusXcm) && isPositiveNumber(value.radiusYcm)
     case 'polygon':
-      return Array.isArray(value.points)
-        && value.points.length >= 3
-        && value.points.every(isPoint)
+      return Array.isArray(value.points) && value.points.length >= 3 && value.points.every(isPoint)
     case 'path':
       return Array.isArray(value.nodes)
         && value.nodes.length >= (value.closed === true ? 3 : 2)
@@ -101,9 +111,7 @@ function isGaugeInput(value: unknown): value is GaugeInput {
 }
 
 function isFabric(value: unknown): value is FabricCanvas {
-  return isRecord(value)
-    && isPositiveNumber(value.widthCm)
-    && isPositiveNumber(value.heightCm)
+  return isRecord(value) && isPositiveNumber(value.widthCm) && isPositiveNumber(value.heightCm)
 }
 
 function isShapeDirections(value: unknown): value is Record<string, KnitDirection> {
@@ -138,6 +146,15 @@ export function isPersistedEditorDocument(value: unknown): value is PersistedEdi
   return new Set(value.shapes.map((shape) => shape.id)).size === value.shapes.length
 }
 
+function isPersistedProject(value: unknown): value is PersistedProject {
+  return isRecord(value)
+    && typeof value.id === 'string' && value.id.length > 0
+    && typeof value.name === 'string' && value.name.trim().length > 0
+    && typeof value.createdAt === 'string'
+    && typeof value.updatedAt === 'string'
+    && isPersistedEditorDocument(value.document)
+}
+
 export function getBrowserEditorStorage(): EditorStorage | null {
   try {
     return typeof window === 'undefined' ? null : window.localStorage
@@ -146,31 +163,23 @@ export function getBrowserEditorStorage(): EditorStorage | null {
   }
 }
 
+function readStorageValue(storage: EditorStorage | null, key: string): unknown | null | undefined {
+  if (!storage) return null
+  try {
+    const serialized = storage.getItem(key)
+    return serialized === null ? null : JSON.parse(serialized)
+  } catch {
+    return undefined
+  }
+}
+
 export function loadEditorDocument(
   storage: EditorStorage | null = getBrowserEditorStorage(),
 ): PersistedEditorDocument | null {
-  if (!storage) return null
-
-  let serialized: string | null
-  try {
-    serialized = storage.getItem(EDITOR_STORAGE_KEY)
-  } catch {
-    return null
-  }
-  if (serialized === null) return null
-
-  try {
-    const value: unknown = JSON.parse(serialized)
-    if (isPersistedEditorDocument(value)) return value
-  } catch {
-    // The invalid document is removed below so it cannot break every future startup.
-  }
-
-  try {
-    storage.removeItem(EDITOR_STORAGE_KEY)
-  } catch {
-    // Storage may be readable but not writable; startup should still continue.
-  }
+  const value = readStorageValue(storage, EDITOR_STORAGE_KEY)
+  if (value === null) return null
+  if (isPersistedEditorDocument(value)) return value
+  try { storage?.removeItem(EDITOR_STORAGE_KEY) } catch { /* startup must continue */ }
   return null
 }
 
@@ -187,27 +196,72 @@ export function saveEditorDocument(
   }
 }
 
-export function installEditorAutoSave(options: {
-  createDocument: () => PersistedEditorDocument
+/** Loads valid projects individually so one damaged project cannot discard the whole library. */
+export function loadProjectLibrary(
+  storage: EditorStorage | null = getBrowserEditorStorage(),
+): PersistedProjectLibrary | null {
+  const value = readStorageValue(storage, PROJECT_LIBRARY_STORAGE_KEY)
+  if (value === null) return null
+  if (!isRecord(value) || value.version !== PROJECT_LIBRARY_VERSION || !Array.isArray(value.projects)) {
+    try { storage?.removeItem(PROJECT_LIBRARY_STORAGE_KEY) } catch { /* startup must continue */ }
+    return null
+  }
+
+  const seen = new Set<string>()
+  const projects = value.projects.filter((project): project is PersistedProject => {
+    if (!isPersistedProject(project) || seen.has(project.id)) return false
+    seen.add(project.id)
+    return true
+  }).slice(0, MAX_PROJECTS)
+  if (!projects.length) return null
+
+  const requestedActiveId = typeof value.activeProjectId === 'string' ? value.activeProjectId : ''
+  const activeProjectId = projects.some((project) => project.id === requestedActiveId)
+    ? requestedActiveId
+    : [...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0].id
+  return { version: PROJECT_LIBRARY_VERSION, activeProjectId, projects }
+}
+
+export function saveProjectLibrary(
+  library: PersistedProjectLibrary,
+  storage: EditorStorage | null = getBrowserEditorStorage(),
+): boolean {
+  if (!storage) return false
+  try {
+    storage.setItem(PROJECT_LIBRARY_STORAGE_KEY, JSON.stringify(library))
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function removeLegacyEditorDocument(storage: EditorStorage | null): void {
+  try { storage?.removeItem(EDITOR_STORAGE_KEY) } catch { /* migration has already succeeded */ }
+}
+
+export function installProjectAutoSave(options: {
+  createLibrary: () => PersistedProjectLibrary
   storage?: EditorStorage | null
   pageLifecycleTarget?: PageLifecycleTarget | null
   delayMs?: number
-}): { schedule: () => void; flush: () => void; dispose: () => void } {
+  onSave?: (saved: boolean) => void
+}): { schedule: () => void; flush: () => boolean; dispose: () => void } {
   const storage = options.storage === undefined ? getBrowserEditorStorage() : options.storage
   const delayMs = options.delayMs ?? EDITOR_AUTOSAVE_DELAY_MS
   let timer: ReturnType<typeof setTimeout> | null = null
 
-  const flush = (): void => {
+  const flush = (): boolean => {
     if (timer !== null) clearTimeout(timer)
     timer = null
-    saveEditorDocument(options.createDocument(), storage)
+    const saved = saveProjectLibrary(options.createLibrary(), storage)
+    options.onSave?.(saved)
+    return saved
   }
   const schedule = (): void => {
-    if (!storage) return
     if (timer !== null) clearTimeout(timer)
     timer = setTimeout(flush, delayMs)
   }
-  const handlePageHide = (): void => flush()
+  const handlePageHide = (): void => { flush() }
   options.pageLifecycleTarget?.addEventListener('pagehide', handlePageHide)
 
   return {

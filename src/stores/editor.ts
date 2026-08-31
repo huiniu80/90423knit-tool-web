@@ -15,11 +15,21 @@ import type {
 } from './editor.types'
 import {
   EDITOR_DOCUMENT_VERSION,
+  MAX_PROJECTS,
+  PROJECT_LIBRARY_VERSION,
   getBrowserEditorStorage,
-  installEditorAutoSave,
+  installProjectAutoSave,
   loadEditorDocument,
+  loadProjectLibrary,
+  removeLegacyEditorDocument,
+  saveProjectLibrary,
 } from './editor.persistence'
-import type { PageLifecycleTarget, PersistedEditorDocument } from './editor.persistence'
+import type {
+  PageLifecycleTarget,
+  PersistedEditorDocument,
+  PersistedProject,
+  PersistedProjectLibrary,
+} from './editor.persistence'
 
 function clonePlain<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -57,7 +67,6 @@ function createId(): string {
 
 export const useEditorStore = defineStore('editor', () => {
   const storage = getBrowserEditorStorage()
-  const persistedDocument = loadEditorDocument(storage)
   const defaultGaugeInput: GaugeInput = {
     sampleStitches: 10,
     sampleRows: 10,
@@ -69,6 +78,49 @@ export const useEditorStore = defineStore('editor', () => {
     mode: 'center',
     symmetryOptimization: true,
   }
+  function createBlankDocument(savedAt = new Date().toISOString()): PersistedEditorDocument {
+    return {
+      version: EDITOR_DOCUMENT_VERSION,
+      savedAt,
+      gaugeInput: clonePlain(defaultGaugeInput),
+      fabric: clonePlain(defaultFabric),
+      shapes: [],
+      shapeDirections: {},
+      rasterOptions: clonePlain(defaultRasterOptions),
+      selectedShapeId: null,
+      selectedPlanShapeId: null,
+    }
+  }
+
+  const loadedLibrary = loadProjectLibrary(storage)
+  const legacyDocument = loadedLibrary ? null : loadEditorDocument(storage)
+  const startupTime = new Date().toISOString()
+  const initialProject: PersistedProject = legacyDocument
+    ? {
+        id: createId(),
+        name: '方案 1',
+        createdAt: legacyDocument.savedAt,
+        updatedAt: legacyDocument.savedAt,
+        document: clonePlain(legacyDocument),
+      }
+    : {
+        id: createId(),
+        name: '未命名方案 1',
+        createdAt: startupTime,
+        updatedAt: startupTime,
+        document: createBlankDocument(startupTime),
+      }
+  const initialLibrary: PersistedProjectLibrary = loadedLibrary ?? {
+    version: PROJECT_LIBRARY_VERSION,
+    activeProjectId: initialProject.id,
+    projects: [initialProject],
+  }
+  const projects = ref<PersistedProject[]>(clonePlain(initialLibrary.projects))
+  const activeProjectId = ref(initialLibrary.activeProjectId)
+  const activeInitialProject = projects.value.find(
+    (project) => project.id === activeProjectId.value,
+  ) ?? projects.value[0]
+  const persistedDocument = activeInitialProject.document
   const initialShapes = persistedDocument ? cloneShapes(persistedDocument.shapes) : []
   const validInitialSelection = (shapeId: string | null): string | null => (
     shapeId && initialShapes.some((shape) => shape.id === shapeId)
@@ -100,6 +152,7 @@ export const useEditorStore = defineStore('editor', () => {
   const draftPathNodes = ref<PathNode[]>([])
   const draftTool = ref<'polygon' | 'path' | null>(null)
   const drawingSessionId = ref<string | null>(null)
+  const storageStatus = ref<'saved' | 'error'>(storage ? 'saved' : 'error')
 
   const undoStack = ref<HistoryEntry[]>([])
   const redoStack = ref<HistoryEntry[]>([])
@@ -123,6 +176,12 @@ export const useEditorStore = defineStore('editor', () => {
 
   const gauge = computed(() => calculateGauge(gaugeInput.value))
   const fabricGrid = computed(() => calculateFabricGrid(fabric.value, gauge.value))
+  const activeProject = computed(
+    () => projects.value.find((project) => project.id === activeProjectId.value) ?? null,
+  )
+  const hasUnfinishedDraft = computed(
+    () => draftPoints.value.length > 0 || draftPathNodes.value.length > 0,
+  )
   const selectedShape = computed(
     () => shapes.value.find((shape) => shape.id === selectedShapeId.value) ?? null,
   )
@@ -236,13 +295,28 @@ export const useEditorStore = defineStore('editor', () => {
     }
   }
 
+  function syncActiveProject(): PersistedProjectLibrary {
+    const project = projects.value.find((item) => item.id === activeProjectId.value)
+    if (project) {
+      const document = createPersistedDocument()
+      project.document = document
+      project.updatedAt = document.savedAt
+    }
+    return {
+      version: PROJECT_LIBRARY_VERSION,
+      activeProjectId: activeProjectId.value,
+      projects: clonePlain(projects.value),
+    }
+  }
+
   const pageLifecycleTarget: PageLifecycleTarget | null = typeof window === 'undefined'
     ? null
     : window
-  const autoSave = installEditorAutoSave({
-    createDocument: createPersistedDocument,
+  const autoSave = installProjectAutoSave({
+    createLibrary: syncActiveProject,
     storage,
     pageLifecycleTarget,
+    onSave: (saved) => { storageStatus.value = saved ? 'saved' : 'error' },
   })
   watch(
     [
@@ -258,6 +332,12 @@ export const useEditorStore = defineStore('editor', () => {
     { deep: true },
   )
   onScopeDispose(autoSave.dispose)
+
+  if (!loadedLibrary) {
+    const migrated = saveProjectLibrary(syncActiveProject(), storage)
+    storageStatus.value = migrated ? 'saved' : 'error'
+    if (migrated && legacyDocument) removeLegacyEditorDocument(storage)
+  }
 
   function captureHistorySnapshot(): HistorySnapshot {
     return {
@@ -537,6 +617,130 @@ export const useEditorStore = defineStore('editor', () => {
     shapesRevision.value += 1
   }
 
+  function resetProjectSession(): void {
+    undoStack.value = []
+    redoStack.value = []
+    mutationStart = null
+    draftPoints.value = []
+    draftPathNodes.value = []
+    draftTool.value = null
+    drawingSessionId.value = null
+    activeTool.value = 'select'
+    rasterCache.clear()
+    instructionCache.clear()
+  }
+
+  function applyProjectDocument(document: PersistedEditorDocument): void {
+    const nextShapes = cloneShapes(document.shapes)
+    const validSelection = (shapeId: string | null): string | null => (
+      shapeId && nextShapes.some((shape) => shape.id === shapeId)
+        ? shapeId
+        : nextShapes.at(-1)?.id ?? null
+    )
+    gaugeInput.value = clonePlain(document.gaugeInput)
+    fabric.value = clonePlain(document.fabric)
+    shapes.value = nextShapes
+    shapeDirections.value = clonePlain(document.shapeDirections)
+    rasterOptions.value = clonePlain(document.rasterOptions)
+    selectedShapeId.value = validSelection(document.selectedShapeId)
+    selectedPlanShapeId.value = validSelection(document.selectedPlanShapeId)
+      ?? selectedShapeId.value
+    resetProjectSession()
+    shapesRevision.value += 1
+  }
+
+  function saveLibraryNow(): boolean {
+    const saved = saveProjectLibrary({
+      version: PROJECT_LIBRARY_VERSION,
+      activeProjectId: activeProjectId.value,
+      projects: clonePlain(projects.value),
+    }, storage)
+    storageStatus.value = saved ? 'saved' : 'error'
+    return saved
+  }
+
+  function nextProjectName(): string {
+    const names = new Set(projects.value.map((project) => project.name))
+    let index = 1
+    while (names.has(`未命名方案 ${index}`)) index += 1
+    return `未命名方案 ${index}`
+  }
+
+  function makeBlankProject(name = nextProjectName()): PersistedProject {
+    const now = new Date().toISOString()
+    return {
+      id: createId(),
+      name,
+      createdAt: now,
+      updatedAt: now,
+      document: createBlankDocument(now),
+    }
+  }
+
+  function activateProject(projectId: string, discardDraft = false): boolean {
+    if (projectId === activeProjectId.value) return true
+    if (hasUnfinishedDraft.value && !discardDraft) return false
+    const project = projects.value.find((item) => item.id === projectId)
+    if (!project) return false
+    autoSave.flush()
+    activeProjectId.value = project.id
+    applyProjectDocument(project.document)
+    saveLibraryNow()
+    return true
+  }
+
+  function createProject(discardDraft = false): string | null {
+    if (projects.value.length >= MAX_PROJECTS) return null
+    if (hasUnfinishedDraft.value && !discardDraft) return null
+    autoSave.flush()
+    const project = makeBlankProject()
+    projects.value.push(project)
+    activeProjectId.value = project.id
+    applyProjectDocument(project.document)
+    saveLibraryNow()
+    return project.id
+  }
+
+  function replaceProject(projectId: string, discardDraft = false): string | null {
+    if (hasUnfinishedDraft.value && !discardDraft) return null
+    const index = projects.value.findIndex((project) => project.id === projectId)
+    if (index === -1) return null
+    autoSave.flush()
+    const project = makeBlankProject()
+    projects.value.splice(index, 1, project)
+    activeProjectId.value = project.id
+    applyProjectDocument(project.document)
+    saveLibraryNow()
+    return project.id
+  }
+
+  function renameProject(projectId: string, name: string): boolean {
+    const trimmedName = name.trim()
+    const project = projects.value.find((item) => item.id === projectId)
+    if (!project || !trimmedName) return false
+    if (projectId === activeProjectId.value) autoSave.flush()
+    project.name = trimmedName
+    project.updatedAt = new Date().toISOString()
+    saveLibraryNow()
+    return true
+  }
+
+  function deleteProject(projectId: string, discardDraft = false): boolean {
+    if (projects.value.length <= 1) return false
+    const index = projects.value.findIndex((project) => project.id === projectId)
+    if (index === -1) return false
+    if (projectId === activeProjectId.value && hasUnfinishedDraft.value && !discardDraft) return false
+    autoSave.flush()
+    projects.value.splice(index, 1)
+    if (projectId === activeProjectId.value) {
+      const next = [...projects.value].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
+      activeProjectId.value = next.id
+      applyProjectDocument(next.document)
+    }
+    saveLibraryNow()
+    return true
+  }
+
   function undo(): void {
     const previous = undoStack.value.pop()
     if (!previous) return
@@ -560,6 +764,11 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   return {
+    projects,
+    activeProjectId,
+    activeProject,
+    storageStatus,
+    maxProjects: MAX_PROJECTS,
     gaugeInput,
     fabric,
     shapes,
@@ -582,6 +791,7 @@ export const useEditorStore = defineStore('editor', () => {
     selectedShapePlan,
     instructions,
     hasSeparatedRegions,
+    hasUnfinishedDraft,
     canUndo: computed(() => undoStack.value.length > 0),
     canRedo: computed(() => redoStack.value.length > 0),
     beginShapeMutation,
@@ -602,6 +812,11 @@ export const useEditorStore = defineStore('editor', () => {
     finishPathDraft,
     cancelDrawing,
     deleteSelected,
+    activateProject,
+    createProject,
+    replaceProject,
+    renameProject,
+    deleteProject,
     undo,
     redo,
   }

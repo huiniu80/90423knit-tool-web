@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
 import { useEditorStore } from './editor'
-import { EDITOR_STORAGE_KEY } from './editor.persistence'
+import { EDITOR_STORAGE_KEY, PROJECT_LIBRARY_STORAGE_KEY } from './editor.persistence'
 
 class MemoryStorage {
   readonly values = new Map<string, string>()
@@ -48,7 +48,7 @@ describe('Editor Store', () => {
     store.setShapeDirection(circleId, 'top-down')
     await nextTick()
     vi.advanceTimersByTime(300)
-    expect(storage.getItem(EDITOR_STORAGE_KEY)).not.toBeNull()
+    expect(storage.getItem(PROJECT_LIBRARY_STORAGE_KEY)).not.toBeNull()
     const expectedGrid = store.fabricGrid
     store.$dispose()
 
@@ -230,7 +230,7 @@ describe('Editor Store', () => {
     await nextTick()
     vi.advanceTimersByTime(300)
     expect(setItem).toHaveBeenCalledTimes(1)
-    expect(storage.getItem(EDITOR_STORAGE_KEY)).toContain('拖动中的最终名称')
+    expect(storage.getItem(PROJECT_LIBRARY_STORAGE_KEY)).toContain('拖动中的最终名称')
     store.$dispose()
   })
 
@@ -486,6 +486,94 @@ describe('Editor Store', () => {
     })
     expect(store.selectedShapePlan?.isFabric).toBe(true)
     expect(store.selectedShapePlan?.instructions[0]?.isCastOn).toBe(true)
+  })
+
+  it('新建和切换方案会保存各自内容并隔离撤销历史', () => {
+    const storage = new MemoryStorage()
+    stubBrowser(storage)
+    const store = useEditorStore()
+    const firstProjectId = store.activeProjectId
+    store.addDefaultShape('rectangle')
+    store.setGaugeInputValue('sampleStitches', 18)
+    expect(store.canUndo).toBe(true)
+
+    const secondProjectId = store.createProject()
+    expect(secondProjectId).not.toBeNull()
+    expect(store.shapes).toEqual([])
+    expect(store.gaugeInput.sampleStitches).toBe(10)
+    expect(store.canUndo).toBe(false)
+    store.addDefaultShape('circle')
+
+    expect(store.activateProject(firstProjectId)).toBe(true)
+    expect(store.shapes[0]?.type).toBe('rectangle')
+    expect(store.gaugeInput.sampleStitches).toBe(18)
+    expect(store.canUndo).toBe(false)
+    expect(store.activateProject(secondProjectId!)).toBe(true)
+    expect(store.shapes[0]?.type).toBe('circle')
+  })
+
+  it('未完成草稿会阻止方案切换，明确丢弃后才允许继续', () => {
+    const storage = new MemoryStorage()
+    stubBrowser(storage)
+    const store = useEditorStore()
+    const firstProjectId = store.activeProjectId
+    const secondProjectId = store.createProject()!
+    store.addDraftPathNode({ anchor: { x: 2, y: 2 } })
+
+    expect(store.activateProject(firstProjectId)).toBe(false)
+    expect(store.activeProjectId).toBe(secondProjectId)
+    expect(store.draftPathNodes).toHaveLength(1)
+    expect(store.activateProject(firstProjectId, true)).toBe(true)
+    expect(store.draftPathNodes).toEqual([])
+  })
+
+  it('方案库最多五份，替换后仍保持五份', () => {
+    const storage = new MemoryStorage()
+    stubBrowser(storage)
+    const store = useEditorStore()
+    for (let index = 0; index < 4; index += 1) expect(store.createProject()).not.toBeNull()
+
+    expect(store.projects).toHaveLength(5)
+    expect(store.createProject()).toBeNull()
+    const replacedId = store.projects[0].id
+    const replacementId = store.replaceProject(replacedId)
+    expect(replacementId).not.toBeNull()
+    expect(store.projects).toHaveLength(5)
+    expect(store.projects.some((project) => project.id === replacedId)).toBe(false)
+  })
+
+  it('删除当前方案后打开最近修改方案，且不允许删除最后一份', () => {
+    const storage = new MemoryStorage()
+    stubBrowser(storage)
+    const store = useEditorStore()
+    const firstProjectId = store.activeProjectId
+    const secondProjectId = store.createProject()!
+
+    expect(store.deleteProject(secondProjectId)).toBe(true)
+    expect(store.activeProjectId).toBe(firstProjectId)
+    expect(store.projects).toHaveLength(1)
+    expect(store.deleteProject(firstProjectId)).toBe(false)
+  })
+
+  it('旧单文档成功迁移后写入方案库并清理旧键', () => {
+    const storage = new MemoryStorage()
+    storage.setItem(EDITOR_STORAGE_KEY, JSON.stringify({
+      version: 1,
+      savedAt: '2026-08-30T00:00:00.000Z',
+      gaugeInput: { sampleStitches: 20, sampleRows: 24, sampleWidthCm: 10, sampleHeightCm: 10 },
+      fabric: { widthCm: 40, heightCm: 60 },
+      shapes: [],
+      shapeDirections: {},
+      rasterOptions: { mode: 'center', symmetryOptimization: true },
+      selectedShapeId: null,
+      selectedPlanShapeId: null,
+    }))
+    stubBrowser(storage)
+
+    const store = useEditorStore()
+    expect(store.activeProject?.name).toBe('方案 1')
+    expect(storage.getItem(PROJECT_LIBRARY_STORAGE_KEY)).not.toBeNull()
+    expect(storage.getItem(EDITOR_STORAGE_KEY)).toBeNull()
   })
 
 })

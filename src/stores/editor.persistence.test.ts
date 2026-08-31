@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { PersistedEditorDocument } from './editor.persistence'
+import type { PersistedEditorDocument, PersistedProjectLibrary } from './editor.persistence'
 import {
   EDITOR_DOCUMENT_VERSION,
   EDITOR_STORAGE_KEY,
-  installEditorAutoSave,
+  PROJECT_LIBRARY_STORAGE_KEY,
+  PROJECT_LIBRARY_VERSION,
+  installProjectAutoSave,
   loadEditorDocument,
+  loadProjectLibrary,
+  saveProjectLibrary,
   saveEditorDocument,
 } from './editor.persistence'
 
@@ -61,6 +65,20 @@ function documentFixture(): PersistedEditorDocument {
   }
 }
 
+function libraryFixture(): PersistedProjectLibrary {
+  return {
+    version: PROJECT_LIBRARY_VERSION,
+    activeProjectId: 'project-1',
+    projects: [{
+      id: 'project-1',
+      name: '前片方案',
+      createdAt: '2026-08-30T00:00:00.000Z',
+      updatedAt: '2026-08-30T00:00:00.000Z',
+      document: documentFixture(),
+    }],
+  }
+}
+
 afterEach(() => vi.useRealTimers())
 
 describe('编辑器本地持久化', () => {
@@ -93,14 +111,30 @@ describe('编辑器本地持久化', () => {
 
     expect(loadEditorDocument(unavailableStorage)).toBeNull()
     expect(saveEditorDocument(documentFixture(), unavailableStorage)).toBe(false)
+    expect(saveProjectLibrary(libraryFixture(), unavailableStorage)).toBe(false)
+  })
+
+  it('方案库会隔离损坏项目并回退到最近有效方案', () => {
+    const storage = new MemoryStorage()
+    const library = libraryFixture()
+    storage.setItem(PROJECT_LIBRARY_STORAGE_KEY, JSON.stringify({
+      ...library,
+      activeProjectId: 'damaged',
+      projects: [
+        ...library.projects,
+        { id: 'damaged', name: '损坏方案', createdAt: '', updatedAt: '', document: { version: 99 } },
+      ],
+    }))
+
+    expect(loadProjectLibrary(storage)).toEqual(library)
   })
 
   it('连续修改只在防抖结束后保存一次', () => {
     vi.useFakeTimers()
     const storage = new MemoryStorage()
     const setItem = vi.spyOn(storage, 'setItem')
-    const autoSave = installEditorAutoSave({
-      createDocument: documentFixture,
+    const autoSave = installProjectAutoSave({
+      createLibrary: libraryFixture,
       storage,
       delayMs: 300,
     })
@@ -120,8 +154,8 @@ describe('编辑器本地持久化', () => {
     const storage = new MemoryStorage()
     const pageTarget = new PageTarget()
     const setItem = vi.spyOn(storage, 'setItem')
-    const autoSave = installEditorAutoSave({
-      createDocument: documentFixture,
+    const autoSave = installProjectAutoSave({
+      createLibrary: libraryFixture,
       storage,
       pageLifecycleTarget: pageTarget,
       delayMs: 300,

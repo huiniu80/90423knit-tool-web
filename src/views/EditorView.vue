@@ -1,13 +1,20 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import CanvasToolbar from '../components/CanvasToolbar.vue'
 import GaugePanel from '../components/GaugePanel.vue'
 import KnittingCanvas from '../components/KnittingCanvas.vue'
+import ProjectLibraryDialog from '../components/ProjectLibraryDialog.vue'
 import ShapePropertyPanel from '../components/ShapePropertyPanel.vue'
+import { useEditorStore } from '../stores/editor'
 import { loadSidebarExpanded, saveSidebarExpanded } from './editorLayoutPreferences'
 
+const store = useEditorStore()
+const { activeProject, hasUnfinishedDraft, projects, storageStatus } = storeToRefs(store)
 const canvasRef = ref<InstanceType<typeof KnittingCanvas> | null>(null)
 const sidebarExpanded = ref(loadSidebarExpanded())
+const projectLibraryOpen = ref(false)
+const replacementMode = ref(false)
 let canvasFitTimer: ReturnType<typeof setTimeout> | null = null
 
 function scheduleCanvasFit(): void {
@@ -24,6 +31,24 @@ function toggleSidebar(): void {
   sidebarExpanded.value = !sidebarExpanded.value
   saveSidebarExpanded(sidebarExpanded.value)
   scheduleCanvasFit()
+}
+
+function confirmDiscardDraft(): boolean {
+  return !hasUnfinishedDraft.value || window.confirm('当前有尚未完成的路径草稿，新建后草稿不会保存。继续吗？')
+}
+
+function openLibrary(replace = false): void {
+  replacementMode.value = replace
+  projectLibraryOpen.value = true
+}
+
+function createProject(): void {
+  if (projects.value.length >= store.maxProjects) {
+    openLibrary(true)
+    return
+  }
+  if (!confirmDiscardDraft()) return
+  if (store.createProject(true)) scheduleCanvasFit()
 }
 
 onMounted(scheduleCanvasFit)
@@ -45,6 +70,19 @@ onBeforeUnmount(() => {
           <p>Knitting Shape Planner</p>
         </div>
       </div>
+      <div class="project-header-controls">
+        <div class="current-project" :title="activeProject?.name">
+          <span>当前方案</span>
+          <strong>{{ activeProject?.name ?? '未命名方案' }}</strong>
+        </div>
+        <span v-if="storageStatus === 'error'" class="storage-error" role="status">本地保存失败</span>
+        <button class="library-button" type="button" @click="openLibrary(false)">
+          方案库 <b>{{ projects.length }}/{{ store.maxProjects }}</b>
+        </button>
+        <button class="new-project-button" type="button" @click="createProject">
+          {{ projects.length >= store.maxProjects ? '选择替换' : '＋ 新建方案' }}
+        </button>
+      </div>
     </header>
 
     <main :class="['editor-main', { 'sidebar-collapsed': !sidebarExpanded }]">
@@ -60,5 +98,7 @@ onBeforeUnmount(() => {
         <KnittingCanvas ref="canvasRef" />
       </section>
     </main>
+    <ProjectLibraryDialog :open="projectLibraryOpen" :replacement-mode="replacementMode"
+      @close="projectLibraryOpen = false" @changed="scheduleCanvasFit" />
   </div>
 </template>
