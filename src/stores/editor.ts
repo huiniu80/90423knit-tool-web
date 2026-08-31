@@ -79,7 +79,7 @@ export const useEditorStore = defineStore('editor', () => {
     sampleWidthCm: 10,
     sampleHeightCm: 6,
   }
-  const defaultFabric: FabricCanvas = { widthCm: 30, heightCm: 30 }
+  const defaultFabric: FabricCanvas = { widthCm: 60, heightCm: 70 }
   const defaultRasterOptions: RasterOptions = {
     mode: 'center',
     symmetryOptimization: true,
