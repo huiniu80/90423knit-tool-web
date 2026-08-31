@@ -55,21 +55,6 @@ function createId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `shape-${Date.now()}-${Math.random()}`
 }
 
-function starterShapes(): Shape[] {
-  return [
-    {
-      id: createId(),
-      name: '验收三角形',
-      type: 'triangle',
-      points: [
-        { x: 10, y: 8 },
-        { x: 13, y: 8 },
-        { x: 10, y: 11 },
-      ],
-    },
-  ]
-}
-
 export const useEditorStore = defineStore('editor', () => {
   const storage = getBrowserEditorStorage()
   const persistedDocument = loadEditorDocument(storage)
@@ -84,7 +69,7 @@ export const useEditorStore = defineStore('editor', () => {
     mode: 'center',
     symmetryOptimization: true,
   }
-  const initialShapes = persistedDocument ? cloneShapes(persistedDocument.shapes) : starterShapes()
+  const initialShapes = persistedDocument ? cloneShapes(persistedDocument.shapes) : []
   const validInitialSelection = (shapeId: string | null): string | null => (
     shapeId && initialShapes.some((shape) => shape.id === shapeId)
       ? shapeId

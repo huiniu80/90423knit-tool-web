@@ -37,7 +37,8 @@ describe('Editor Store', () => {
     const storage = new MemoryStorage()
     stubBrowser(storage)
     const store = useEditorStore()
-    const starterId = store.shapes[0]!.id
+    store.addDefaultShape('rectangle')
+    const starterId = store.selectedShapeId!
 
     store.addDefaultShape('circle')
     const circleId = store.selectedShapeId!
@@ -137,7 +138,8 @@ describe('Editor Store', () => {
 
   it('源数据修改后密度、针格和指令自动重算', () => {
     const store = useEditorStore()
-    expect(store.fabricGrid).toEqual({ columnCount: 30, rowCount: 50 })
+    store.addDefaultShape('rectangle')
+    expect(store.fabricGrid).toEqual({ columnCount: 60, rowCount: 117 })
     expect(store.instructions.length).toBeGreaterThan(0)
 
     store.fabric.widthCm = 20
@@ -168,7 +170,8 @@ describe('Editor Store', () => {
 
   it('每个图形独立生成计划，画布针格保持全部图形并集', () => {
     const store = useEditorStore()
-    const starterId = store.shapes[0]!.id
+    store.addDefaultShape('rectangle')
+    const starterId = store.selectedShapeId!
     store.addPath([
       { anchor: { x: 2, y: 2 } },
       { anchor: { x: 12, y: 6 } },
@@ -189,7 +192,8 @@ describe('Editor Store', () => {
 
   it('只修改一个图形时复用其他图形的栅格结果', () => {
     const store = useEditorStore()
-    const firstShapeId = store.shapes[0]!.id
+    store.addDefaultShape('circle')
+    const firstShapeId = store.selectedShapeId!
     store.addDefaultShape('rectangle')
     const rectangle = store.selectedShape!
     if (rectangle.type !== 'rectangle') throw new Error('expected rectangle')
@@ -210,7 +214,11 @@ describe('Editor Store', () => {
     const setItem = vi.spyOn(storage, 'setItem')
     stubBrowser(storage)
     const store = useEditorStore()
+    store.addDefaultShape('rectangle')
     const shape = store.selectedShape!
+    await nextTick()
+    vi.advanceTimersByTime(300)
+    setItem.mockClear()
 
     store.beginShapeMutation()
     store.updateShapeLive({ ...shape, name: '拖动中的最终名称' })
@@ -228,7 +236,8 @@ describe('Editor Store', () => {
 
   it('在画布上选中哪条路径，就切换到对应的逐行指令', () => {
     const store = useEditorStore()
-    const firstShapeId = store.shapes[0]!.id
+    store.addDefaultShape('rectangle')
+    const firstShapeId = store.selectedShapeId!
     store.addPath([
       { anchor: { x: 2, y: 2 } },
       { anchor: { x: 18, y: 12 } },
@@ -246,6 +255,7 @@ describe('Editor Store', () => {
 
   it('对象计划名称实时更新且删除后回退到有效对象', () => {
     const store = useEditorStore()
+    store.addDefaultShape('rectangle')
     store.addDefaultShape('circle')
     const circleId = store.selectedShapeId!
     const circle = store.selectedShape!
@@ -288,7 +298,8 @@ describe('Editor Store', () => {
 
   it('每个轮廓对象使用独立方向，新对象默认自下而上', () => {
     const store = useEditorStore()
-    const firstShapeId = store.shapes[0]!.id
+    store.addDefaultShape('circle')
+    const firstShapeId = store.selectedShapeId!
     expect(store.direction).toBe('bottom-up')
     store.direction = 'top-down'
     expect(store.shapePlans.find((plan) => plan.shapeId === firstShapeId)?.direction).toBe('top-down')
@@ -409,7 +420,8 @@ describe('Editor Store', () => {
 
   it('编织参数、画布尺寸、离散策略和编织方向均按步骤撤销', () => {
     const store = useEditorStore()
-    const shapeId = store.shapes[0]!.id
+    store.addDefaultShape('rectangle')
+    const shapeId = store.selectedShapeId!
     store.setGaugeInputValue('sampleStitches', 12)
     store.setFabricValue('widthCm', 42)
     store.setRasterOptions({ mode: 'inside' })
@@ -421,7 +433,7 @@ describe('Editor Store', () => {
     store.undo()
     expect(store.rasterOptions.mode).toBe('center')
     store.undo()
-    expect(store.fabric.widthCm).toBe(30)
+    expect(store.fabric.widthCm).toBe(60)
     store.undo()
     expect(store.gaugeInput.sampleStitches).toBe(10)
 
