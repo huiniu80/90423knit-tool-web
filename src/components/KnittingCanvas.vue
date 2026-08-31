@@ -21,6 +21,7 @@ import {
   evaluatePathSegment,
   findNearestOpenPathEndpoint,
   findNearestPathPosition,
+  flattenPath,
   movePathControlWithSymmetry,
   movePathNodeWithSymmetry,
   pathSegmentCount,
@@ -31,6 +32,7 @@ import type { PathSymmetry } from '../core/geometry/path'
 import { describeBoundarySegmentShaping } from '../core/knitting/segmentPlanner'
 import { useEditorStore } from '../stores/editor'
 import { layoutMarkersGlobally } from './markerLayout'
+import type { LineObstacle } from './markerLayout'
 
 type Corner = 'nw' | 'ne' | 'se' | 'sw'
 type Interaction =
@@ -342,6 +344,10 @@ const annotationModels = computed<AnnotationModel[]>(() => {
   return models
 })
 
+const outlineLineObstacles = computed(() =>
+  shapes.value.flatMap(shapeOutlineLineObstacles),
+)
+
 const shapingAnnotations = computed<ShapingAnnotation[]>(() => {
   const drafts: AnnotationDraft[] = annotationModels.value.map((model) => {
     const anchorX = pan.value.x + model.anchor.x * zoom.value
@@ -396,6 +402,7 @@ const shapingAnnotations = computed<ShapingAnnotation[]>(() => {
         width: annotation.width,
         height: annotation.height,
       })),
+      lineObstacles: outlineLineObstacles.value,
     },
   )
   const markerPositionById = new Map(positionedMarkers.map((marker) => [marker.id, marker]))
@@ -429,6 +436,65 @@ function toCanvasPoint(point: Point): Point {
   return {
     x: point.x * zoom.value,
     y: (fabric.value.heightCm - point.y) * zoom.value,
+  }
+}
+
+function toStagePoint(point: Point): Point {
+  const canvasPoint = toCanvasPoint(point)
+  return { x: pan.value.x + canvasPoint.x, y: pan.value.y + canvasPoint.y }
+}
+
+function pointsToLineObstacles(points: Point[], closed: boolean): LineObstacle[] {
+  if (points.length < 2) return []
+  const stagePoints = points.map(toStagePoint)
+  const count = closed ? stagePoints.length : stagePoints.length - 1
+  return Array.from({ length: count }, (_, index) => {
+    const start = stagePoints[index]!
+    const end = stagePoints[(index + 1) % stagePoints.length]!
+    return {
+      startX: start.x,
+      startY: start.y,
+      endX: end.x,
+      endY: end.y,
+    }
+  })
+}
+
+function ellipseOutlinePoints(center: Point, radiusX: number, radiusY: number): Point[] {
+  const sampleCount = 96
+  return Array.from({ length: sampleCount }, (_, index) => {
+    const angle = index / sampleCount * Math.PI * 2
+    return {
+      x: center.x + Math.cos(angle) * radiusX,
+      y: center.y + Math.sin(angle) * radiusY,
+    }
+  })
+}
+
+function shapeOutlineLineObstacles(shape: Shape): LineObstacle[] {
+  switch (shape.type) {
+    case 'rectangle':
+      return pointsToLineObstacles([
+        { x: shape.x, y: shape.y },
+        { x: shape.x + shape.widthCm, y: shape.y },
+        { x: shape.x + shape.widthCm, y: shape.y + shape.heightCm },
+        { x: shape.x, y: shape.y + shape.heightCm },
+      ], true)
+    case 'circle':
+      return pointsToLineObstacles(
+        ellipseOutlinePoints(shape.center, shape.radiusCm, shape.radiusCm),
+        true,
+      )
+    case 'ellipse':
+      return pointsToLineObstacles(
+        ellipseOutlinePoints(shape.center, shape.radiusXcm, shape.radiusYcm),
+        true,
+      )
+    case 'triangle':
+    case 'polygon':
+      return pointsToLineObstacles(shape.points, true)
+    case 'path':
+      return pointsToLineObstacles(flattenPath(shape), shape.closed)
   }
 }
 

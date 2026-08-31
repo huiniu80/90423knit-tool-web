@@ -27,10 +27,18 @@ export interface RectangleObstacle {
   height: number
 }
 
+export interface LineObstacle {
+  startX: number
+  startY: number
+  endX: number
+  endY: number
+}
+
 export interface MarkerLayoutOptions {
   bounds: MarkerLayoutBounds
   circleObstacles?: CircleObstacle[]
   rectangleObstacles?: RectangleObstacle[]
+  lineObstacles?: LineObstacle[]
   gap?: number
   searchStep?: number
 }
@@ -82,6 +90,26 @@ function circleOverlapsRectangle(
   return Math.hypot(x - nearestX, y - nearestY) < radius + gap
 }
 
+function circleOverlapsLine(
+  x: number,
+  y: number,
+  radius: number,
+  line: LineObstacle,
+  gap: number,
+): boolean {
+  const deltaX = line.endX - line.startX
+  const deltaY = line.endY - line.startY
+  const lengthSquared = deltaX ** 2 + deltaY ** 2
+  const projection = lengthSquared === 0
+    ? 0
+    : Math.max(0, Math.min(1,
+        ((x - line.startX) * deltaX + (y - line.startY) * deltaY) / lengthSquared,
+      ))
+  const nearestX = line.startX + projection * deltaX
+  const nearestY = line.startY + projection * deltaY
+  return Math.hypot(x - nearestX, y - nearestY) < radius + gap
+}
+
 function ringOffsets(level: number, outward: number): Offset[] {
   const offsets: Offset[] = []
   for (let dx = -level; dx <= level; dx += 1) {
@@ -115,6 +143,7 @@ export function layoutMarkersGlobally(
   const searchStep = options.searchStep ?? defaultSearchStep
   const circleObstacles = options.circleObstacles ?? []
   const rectangleObstacles = options.rectangleObstacles ?? []
+  const lineObstacles = options.lineObstacles ?? []
   const placed: PositionedMarker[] = []
   const maximumLevel = Math.ceil(Math.max(
     options.bounds.right - options.bounds.left,
@@ -142,6 +171,9 @@ export function layoutMarkersGlobally(
       )
       && rectangleObstacles.every((obstacle) =>
         !circleOverlapsRectangle(x, y, marker.radius, obstacle, gap),
+      )
+      && lineObstacles.every((obstacle) =>
+        !circleOverlapsLine(x, y, marker.radius, obstacle, gap),
       )
 
     let position = positionIsFree(marker.anchorX, marker.anchorY)

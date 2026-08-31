@@ -75,4 +75,16 @@ describe('画布编号标记全局布局', () => {
       expect(marker.y).toBeGreaterThanOrEqual(marker.radius)
     })
   })
+
+  it('将红色轮廓线作为障碍物并留出可见间距', () => {
+    const [marker] = layoutMarkersGlobally([
+      { id: 'outline-marker', label: '12', anchorX: 250, anchorY: 200, radius: 14, side: 'right' },
+    ], {
+      bounds,
+      lineObstacles: [{ startX: 100, startY: 200, endX: 400, endY: 200 }],
+    })
+
+    expect(marker).toMatchObject({ anchorX: 250, anchorY: 200 })
+    expect(Math.abs(marker!.y - 200)).toBeGreaterThanOrEqual(18)
+  })
 })
