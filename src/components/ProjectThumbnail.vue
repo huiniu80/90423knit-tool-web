@@ -2,8 +2,14 @@
 import { computed } from 'vue'
 import type { Shape } from '../core/geometry/shape.types'
 import type { PersistedEditorDocument } from '../stores/editor.persistence'
+import { getProjectThumbnailViewBox } from './projectThumbnailViewport'
 
 const props = defineProps<{ document: PersistedEditorDocument }>()
+
+const viewBox = computed(() => getProjectThumbnailViewBox(
+  props.document.shapes,
+  props.document.fabric,
+))
 
 function y(value: number): number {
   return props.document.fabric.heightCm - value
@@ -44,7 +50,7 @@ const renderedShapes = computed(() => props.document.shapes.map((shape) => {
 
 <template>
   <div class="project-thumbnail" aria-hidden="true">
-    <svg :viewBox="`0 0 ${document.fabric.widthCm} ${document.fabric.heightCm}`"
+    <svg :viewBox="viewBox"
       preserveAspectRatio="xMidYMid meet">
       <component :is="shape.tag" v-for="shape in renderedShapes" :key="shape.id" v-bind="shape.attrs"
         fill="rgba(52, 88, 78, .12)" stroke="currentColor" vector-effect="non-scaling-stroke" />
