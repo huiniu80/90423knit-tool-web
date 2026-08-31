@@ -1456,7 +1456,7 @@ function onWindowKeyDown(event: KeyboardEvent): void {
 }
 
 function fitCanvas(): void {
-  const verticalPadding = 72
+  const verticalPadding = 36
   // 始终预留标注区域，让同一画布在轮廓、针格和对比模式下保持相同缩放与位置。
   const horizontalPadding = annotationViewportMargin + annotationWidth + annotationFabricGap
   const nextZoom = Math.min(
