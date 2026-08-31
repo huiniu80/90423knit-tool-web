@@ -627,9 +627,8 @@ function clampPan(nextPan: Point): Point {
     return Math.min(Math.max(offset, Math.min(start, end)), Math.max(start, end))
   }
 
-  const horizontalPadding = viewMode.value === 'outline' || viewMode.value === 'grid'
-    ? annotationViewportMargin + annotationWidth + annotationFabricGap
-    : canvasBoundaryPadding
+  // 三种显示模式共用同一个视口边界，切换模式时画布的位置不会因留白规则不同而变化。
+  const horizontalPadding = annotationViewportMargin + annotationWidth + annotationFabricGap
 
   return {
     x: clampAxis(nextPan.x, fabricWidthPx.value, stageSize.value.width, horizontalPadding),
@@ -1201,9 +1200,8 @@ function onWindowKeyDown(event: KeyboardEvent): void {
 
 function fitCanvas(): void {
   const verticalPadding = 72
-  const horizontalPadding = viewMode.value === 'outline' || viewMode.value === 'grid'
-    ? annotationViewportMargin + annotationWidth + annotationFabricGap
-    : verticalPadding
+  // 始终预留标注区域，让同一画布在轮廓、针格和对比模式下保持相同缩放与位置。
+  const horizontalPadding = annotationViewportMargin + annotationWidth + annotationFabricGap
   const nextZoom = Math.min(
     48,
     Math.max(
@@ -1286,7 +1284,6 @@ watch(selectedShapeId, () => {
 })
 watch(viewMode, (mode, previousMode) => {
   if (mode === 'grid' && previousMode !== 'grid') selectedGridAnnotationSegment.value = null
-  nextTick(fitCanvas)
 })
 watch(() => shapes.value.map((shape) => shape.id), (shapeIds) => {
   if (
