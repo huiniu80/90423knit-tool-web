@@ -77,7 +77,7 @@ onBeforeUnmount(() => {
         </div>
         <span v-if="storageStatus === 'error'" class="storage-error" role="status">本地保存失败</span>
         <button class="library-button" type="button" @click="openLibrary(false)">
-          方案库 <b>{{ projects.length }}/{{ store.maxProjects }}</b>
+          我的方案库 <b>{{ projects.length }}/{{ store.maxProjects }}</b>
         </button>
         <button class="new-project-button" type="button" @click="createProject">
           {{ projects.length >= store.maxProjects ? '选择替换' : '＋ 新建方案' }}

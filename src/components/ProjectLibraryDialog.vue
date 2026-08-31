@@ -179,7 +179,7 @@ function deleteProject(project: PersistedProject): void {
         <header>
           <div>
             <span class="eyebrow">PROJECT LIBRARY</span>
-            <h2 id="project-dialog-title">{{ importingAtCapacity ? '选择要替换的方案' : replacementMode ? '选择要替换的方案' : '方案库' }}</h2>
+            <h2 id="project-dialog-title">{{ importingAtCapacity ? '选择要替换的方案' : replacementMode ? '选择要替换的方案' : '我的方案库' }}</h2>
             <p v-if="importingAtCapacity">已达到 5 份上限，选择一份方案替换为“{{ pendingImport?.project.name }}”。</p>
             <p v-else>{{ replacementMode ? '已达到 5 份上限，选择一份方案替换为空白方案。' : '方案保存在当前浏览器中，可导出后在另一台电脑继续编辑。' }}</p>
           </div>
@@ -189,7 +189,7 @@ function deleteProject(project: PersistedProject): void {
               aria-hidden="true" tabindex="-1"
               @change="importSelectedFile" />
           </div>
-          <button class="dialog-close" type="button" aria-label="关闭方案库" @click="emit('close')">×</button>
+          <button class="dialog-close" type="button" aria-label="关闭我的方案库" @click="emit('close')">×</button>
         </header>
 
         <p v-if="transferMessage" class="project-transfer-message" role="status">{{ transferMessage }}</p>

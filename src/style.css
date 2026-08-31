@@ -415,7 +415,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   .brand-lockup h1 { font-size: 12px; }
   .brand-mark { width: 38px; height: 38px; }
   .library-button { font-size: 0; }
-  .library-button::before { content: "方案库"; font-size: 9px; }
+  .library-button::before { content: "我的方案库"; font-size: 9px; }
   .library-button b { font-size: 9px; }
   .new-project-button { font-size: 9px; }
   .project-card { grid-template-columns: 1fr; }
