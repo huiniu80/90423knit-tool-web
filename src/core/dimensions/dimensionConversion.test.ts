@@ -34,4 +34,36 @@ describe('dimension conversion', () => {
     expect(diagonal.map((item) => item.axis)).toEqual(['stitches', 'rows'])
     expect(horizontal.map((item) => item.axis)).toEqual(['stitches'])
   })
+
+  it('直线的纵向误差不足半行时按水平线量衣', () => {
+    const gauge = calculateGauge({
+      sampleStitches: 11, sampleRows: 10, sampleWidthCm: 10, sampleHeightCm: 6,
+    })
+    const results = createShapeDimensionResults({
+      id: 'almost-horizontal', type: 'path', closed: false,
+      nodes: [{ anchor: { x: 1, y: 2 } }, { anchor: { x: 25.82, y: 2.18 } }],
+    }, gauge, { stitches: null, rows: null })
+
+    expect(results.map((item) => item.axis)).toEqual(['stitches'])
+  })
+
+  it('半行误差仍保留行数换算，曲线不应用水平容差', () => {
+    const gauge = calculateGauge({
+      sampleStitches: 20, sampleRows: 20, sampleWidthCm: 10, sampleHeightCm: 10,
+    })
+    const atBoundary = createShapeDimensionResults({
+      id: 'half-row', type: 'path', closed: false,
+      nodes: [{ anchor: { x: 1, y: 2 } }, { anchor: { x: 5, y: 2.25 } }],
+    }, gauge, { stitches: null, rows: null })
+    const shallowCurve = createShapeDimensionResults({
+      id: 'shallow-curve', type: 'path', closed: false,
+      nodes: [
+        { anchor: { x: 1, y: 2 }, outControl: { x: 2, y: 2.1 } },
+        { anchor: { x: 5, y: 2.1 }, inControl: { x: 4, y: 2.1 } },
+      ],
+    }, gauge, { stitches: null, rows: null })
+
+    expect(atBoundary.map((item) => item.axis)).toEqual(['stitches', 'rows'])
+    expect(shallowCurve.map((item) => item.axis)).toEqual(['stitches', 'rows'])
+  })
 })

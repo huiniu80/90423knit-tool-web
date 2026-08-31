@@ -35,6 +35,7 @@ export interface DimensionConversionResult {
 }
 
 export const DIMENSION_EPSILON = 1e-6
+export const HORIZONTAL_LINE_ROW_TOLERANCE = 0.5
 
 function option(
   direction: RoundingDirection,
@@ -88,6 +89,8 @@ export function createShapeDimensionResults(
   return getShapeBoundarySegments(shape).flatMap((segment) => {
     const bounds = getShapeBounds(segment.rasterShape)
     const results: DimensionConversionResult[] = []
+    const isEffectivelyHorizontal = segment.isStraight
+      && bounds.height * gauge.rowsPerCm < HORIZONTAL_LINE_ROW_TOLERANCE
     if (bounds.width > DIMENSION_EPSILON) {
       results.push(convertDimension(
         shape.id,
@@ -99,7 +102,7 @@ export function createShapeDimensionResults(
         { x: segment.anchor.x, y: bounds.y + bounds.height / 2 },
       ))
     }
-    if (bounds.height > DIMENSION_EPSILON) {
+    if (bounds.height > DIMENSION_EPSILON && !isEffectivelyHorizontal) {
       results.push(convertDimension(
         shape.id,
         segment.segmentIndex,

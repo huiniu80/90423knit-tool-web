@@ -7,6 +7,7 @@ export interface ShapeBoundarySegment {
   segmentIndex: number
   rasterShape: Shape
   anchor: Point
+  isStraight: boolean
   spansBothSides: boolean
   sourceShape: Shape
 }
@@ -40,6 +41,7 @@ function pointPairSegments(shape: Shape, points: readonly Point[]): ShapeBoundar
       segmentIndex,
       rasterShape: openPathSegment(shape.id, segmentIndex, start, end),
       anchor: { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 },
+      isStraight: true,
       spansBothSides: false,
       sourceShape: shape,
     }
@@ -63,6 +65,8 @@ export function getShapeBoundarySegments(shape: Shape): ShapeBoundarySegment[] {
           segment.p2,
         ),
         anchor: evaluatePathSegment(shape, segmentIndex, 0.5),
+        isStraight: !shape.nodes[segment.startIndex]!.outControl
+          && !shape.nodes[segment.endIndex]!.inControl,
         spansBothSides: false,
         sourceShape: shape,
       }
@@ -91,6 +95,7 @@ export function getShapeBoundarySegments(shape: Shape): ShapeBoundarySegment[] {
     segmentIndex: 0,
     rasterShape: shape,
     anchor,
+    isStraight: false,
     spansBothSides: true,
     sourceShape: shape,
   }]
