@@ -268,9 +268,9 @@ const dimensionLabels = computed<DimensionLabelModel[]>(() => {
       ? `${formatCm(result.targetCm)}cm × ${formatCm(result.densityPerCm)}${dimensionUnit(result.axis)}/cm = ${result.selected!.count}${dimensionUnit(result.axis)}`
       : `${formatCm(result.targetCm)}cm × ${formatCm(result.densityPerCm)}${dimensionUnit(result.axis)}/cm = ${formatCm(result.rawCount)}${dimensionUnit(result.axis)}`
     const width = stageSize.value.width < 800
-      ? Math.max(150, Math.min(210, (stageSize.value.width - 30) / 2))
-      : 260
-    const height = result.confirmed ? 48 : 96
+      ? Math.max(160, Math.min(220, (stageSize.value.width - 26) / 2))
+      : 280
+    const height = result.confirmed ? 60 : 108
     const anchorX = pan.value.x + result.anchor.x * zoom.value
     const anchorY = pan.value.y + (fabric.value.heightCm - result.anchor.y) * zoom.value
     const relativeX = result.anchor.x - fabric.value.widthCm / 2
@@ -1631,42 +1631,46 @@ defineExpose({ fitCanvas, exportCanvas })
               shadowOpacity: .16, shadowOffsetY: 2, listening: false,
             }" />
             <v-text :config="{
-              x: 10, y: 7, width: label.width - 20, height: 18, text: label.title,
-              fill: '#263d36', fontSize: 12, fontStyle: 'bold', listening: false,
+              x: 10, y: 8, width: label.width - 20, height: 19, text: label.title,
+              fill: '#263d36', fontSize: label.width < 240 ? 11 : 13,
+              fontStyle: 'bold', listening: false,
             }" />
             <v-text :config="{
-              x: 10, y: 25, width: label.width - 20, height: 16, text: label.formula,
-              fill: '#68716c', fontSize: 9, listening: false,
+              x: 10, y: 29, width: label.width - 20, height: 15, text: label.formula,
+              fill: '#59645e', fontSize: label.width < 240 ? 9 : 10.5, listening: false,
             }" />
             <template v-if="!label.result.confirmed">
               <v-text :config="{
-                x: 10, y: 41, width: label.width - 20, height: 13,
+                x: 10, y: 46, width: label.width - 20, height: 14,
                 text: '取整待确认 · 将应用到本织片所有' + (label.result.axis === 'stitches' ? '横向' : '纵向') + '尺寸',
-                fill: '#a24c35', fontSize: 9, fontStyle: 'bold', listening: false,
+                fill: '#a24c35', fontSize: label.width < 240 ? 8.5 : 10,
+                fontStyle: 'bold', listening: false,
               }" />
               <v-group v-for="(roundingDirection, optionIndex) in (['floor', 'ceil'] as const)"
                 :key="roundingDirection" :config="{
-                  x: 7 + optionIndex * ((label.width - 20) / 2 + 6), y: 55,
+                  x: 7 + optionIndex * ((label.width - 20) / 2 + 6), y: 62,
                 }">
                 <v-rect :config="{
                   name: dimensionTargetName(label.result, roundingDirection),
-                  width: (label.width - 20) / 2, height: 34,
+                  width: (label.width - 20) / 2, height: 39,
                   fill: roundingDirection === 'floor' ? '#f3eee4' : '#e3efeb',
                   stroke: roundingDirection === 'floor' ? '#c1aa83' : '#7fa597',
                   strokeWidth: 1, cornerRadius: 6,
                 }" />
                 <v-text :config="{
                   name: dimensionTargetName(label.result, roundingDirection),
-                  x: 4, y: 3, width: (label.width - 20) / 2 - 8, height: 29,
+                  x: 4, y: 4, width: (label.width - 20) / 2 - 8, height: 32,
                   text: dimensionOptionText(label.result, roundingDirection),
-                  fill: '#35433d', fontSize: 7, lineHeight: 1.3, align: 'center',
+                  fill: '#35433d', fontSize: label.width < 240 ? 8 : 9.5,
+                  lineHeight: 1.25, align: 'center',
                 }" />
               </v-group>
             </template>
             <v-text v-else :config="{
-              x: 10, y: 39, width: label.width - 20, height: 10,
+              x: 10, y: 46, width: label.width - 20, height: 12,
               text: label.result.exact ? '精确整数' : '实际 ' + formatCm(label.result.selected!.actualCm) + 'cm · 偏差 ' + formatDeviation(label.result.selected!.deviationCm),
-              fill: label.result.exact ? '#52756b' : '#87592f', fontSize: 8, listening: false,
+              fill: label.result.exact ? '#52756b' : '#87592f',
+              fontSize: label.width < 240 ? 8.5 : 10, listening: false,
             }" />
           </v-group>
         </template>
