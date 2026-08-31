@@ -24,6 +24,7 @@ function projectFixture(): PersistedProject {
         x: 5, y: 4, widthCm: 30, heightCm: 50,
       }],
       shapeDirections: { 'front-piece': 'top-down' },
+      shapeRoundingPolicies: { 'front-piece': { stitches: 'ceil', rows: null } },
       rasterOptions: { mode: 'inside', symmetryOptimization: false },
       selectedShapeId: 'front-piece',
       selectedPlanShapeId: 'front-piece',

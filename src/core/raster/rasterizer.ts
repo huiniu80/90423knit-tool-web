@@ -1,12 +1,13 @@
 import type { FabricCanvas, Gauge } from '../gauge/gauge.types'
 import { calculateFabricGrid } from '../gauge/gauge'
-import { getHorizontalIntervals } from '../geometry/geometry'
+import { getHorizontalIntervals, getShapeBounds, resizeShapeToBounds } from '../geometry/geometry'
 import { flattenPath } from '../geometry/path'
 import type { HorizontalInterval, PathShape, Point, Shape } from '../geometry/shape.types'
 import type {
   RasterMode,
   RasterOptions,
   RasterRow,
+  ShapeRasterTarget,
   StitchSegment,
 } from './raster.types'
 
@@ -228,7 +229,20 @@ export function rasterize(
   gauge: Gauge,
   canvas: FabricCanvas,
   options: RasterOptions,
+  target?: ShapeRasterTarget,
 ): RasterRow[] {
+  if (target && (target.stitches !== null || target.rows !== null)) {
+    const bounds = getShapeBounds(shape)
+    const width = target.stitches === null ? bounds.width : target.stitches * gauge.stitchWidthCm
+    const height = target.rows === null ? bounds.height : target.rows * gauge.rowHeightCm
+    const adjustedBounds = {
+      x: bounds.x + (bounds.width - width) / 2,
+      y: target.direction === 'bottom-up' ? bounds.y : bounds.y + bounds.height - height,
+      width,
+      height,
+    }
+    shape = resizeShapeToBounds(shape, adjustedBounds)
+  }
   if (shape.type === 'path' && !shape.closed) {
     return rasterizeOpenPath(shape, gauge, canvas)
   }

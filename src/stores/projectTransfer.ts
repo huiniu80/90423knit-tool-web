@@ -1,8 +1,8 @@
 import type { PersistedEditorDocument, PersistedProject } from './editor.persistence'
-import { isPersistedEditorDocument } from './editor.persistence'
+import { migrateEditorDocument } from './editor.persistence'
 
 export const PROJECT_FILE_FORMAT = 'knitting-pattern-planner/project'
-export const PROJECT_FILE_VERSION = 1
+export const PROJECT_FILE_VERSION = 2
 
 export interface ExportedProjectFileV1 {
   format: typeof PROJECT_FILE_FORMAT
@@ -29,6 +29,7 @@ function clonePlain<T>(value: T): T {
 function hasConsistentDocumentReferences(document: PersistedEditorDocument): boolean {
   const shapeIds = new Set(document.shapes.map((shape) => shape.id))
   return Object.keys(document.shapeDirections).every((shapeId) => shapeIds.has(shapeId))
+    && Object.keys(document.shapeRoundingPolicies).every((shapeId) => shapeIds.has(shapeId))
     && (document.selectedShapeId === null || shapeIds.has(document.selectedShapeId))
     && (document.selectedPlanShapeId === null || shapeIds.has(document.selectedPlanShapeId))
 }
@@ -63,7 +64,7 @@ export function parseProjectFile(serialized: string): ProjectFileParseResult {
   if (!isRecord(value) || value.format !== PROJECT_FILE_FORMAT) {
     return { ok: false, reason: 'invalid-file' }
   }
-  if (value.version !== PROJECT_FILE_VERSION) {
+  if (value.version !== 1 && value.version !== PROJECT_FILE_VERSION) {
     return { ok: false, reason: 'unsupported-version' }
   }
   if (!isRecord(value.project)
@@ -71,10 +72,17 @@ export function parseProjectFile(serialized: string): ProjectFileParseResult {
     || !value.project.name.trim()
     || typeof value.exportedAt !== 'string'
     || Number.isNaN(Date.parse(value.exportedAt))
-    || !isPersistedEditorDocument(value.project.document)
-    || !hasConsistentDocumentReferences(value.project.document)) {
+  ) {
     return { ok: false, reason: 'invalid-file' }
   }
-
-  return { ok: true, file: value as unknown as ExportedProjectFileV1 }
+  const document = migrateEditorDocument(value.project.document)
+  if (!document || !hasConsistentDocumentReferences(document)) return { ok: false, reason: 'invalid-file' }
+  return {
+    ok: true,
+    file: {
+      ...(value as unknown as ExportedProjectFileV1),
+      version: PROJECT_FILE_VERSION,
+      project: { name: value.project.name, document },
+    },
+  }
 }

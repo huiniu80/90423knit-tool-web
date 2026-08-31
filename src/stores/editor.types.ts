@@ -1,4 +1,5 @@
 import type { Shape } from '../core/geometry/shape.types'
+import type { DimensionConversionResult } from '../core/dimensions/dimensionConversion'
 import type { KnitDirection } from '../core/knitting/planner.types'
 import type { KnittingInstruction } from '../core/knitting/planner.types'
 import type { RasterRow } from '../core/raster/raster.types'
@@ -25,4 +26,6 @@ export interface ShapePlan {
   totalStitches: number
   hasSeparatedRegions: boolean
   isFabric: boolean
+  dimensions: DimensionConversionResult[]
+  roundingPending: boolean
 }

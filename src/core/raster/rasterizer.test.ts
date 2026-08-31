@@ -51,6 +51,26 @@ describe('Rasterizer', () => {
     expect(first?.stitchCount).toBe(5)
   })
 
+  it('确认取整后以同一目标控制针格宽高并按编织方向固定起始边', () => {
+    const preciseGauge = calculateGauge({
+      sampleStitches: 20, sampleRows: 28, sampleWidthCm: 10, sampleHeightCm: 10,
+    })
+    const shape: Shape = { id: 'r', type: 'rectangle', x: 5, y: 4, widthCm: 18.2, heightCm: 19 }
+    const floorRows = rasterize(shape, preciseGauge, canvas, {
+      mode: 'center', symmetryOptimization: true,
+    }, { stitches: 36, rows: 53, direction: 'bottom-up' }).filter((row) => row.stitchCount > 0)
+    const ceilRows = rasterize(shape, preciseGauge, canvas, {
+      mode: 'center', symmetryOptimization: true,
+    }, { stitches: 37, rows: 54, direction: 'top-down' }).filter((row) => row.stitchCount > 0)
+
+    expect(floorRows).toHaveLength(53)
+    expect(floorRows.every((row) => row.stitchCount === 36)).toBe(true)
+    expect(ceilRows).toHaveLength(54)
+    expect(ceilRows.every((row) => row.stitchCount === 37)).toBe(true)
+    expect(ceilRows[0]?.rowIndex).toBe((floorRows[0]?.rowIndex ?? 0) - 1)
+    expect(ceilRows.at(-1)?.rowIndex).toBe(floorRows.at(-1)?.rowIndex)
+  })
+
   it('复用单图形结果合并时与完整栅格化完全一致', () => {
     const shapes: Shape[] = [
       { id: 'a', type: 'rectangle', x: -1, y: 0, widthCm: 6, heightCm: 4 },

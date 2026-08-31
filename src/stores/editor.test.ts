@@ -48,6 +48,7 @@ describe('Editor Store', () => {
     store.setFabricValue('widthCm', 42)
     store.setRasterOptions({ mode: 'inside' })
     store.setShapeDirection(circleId, 'top-down')
+    store.setShapeRoundingDirection(circleId, 'stitches', 'ceil')
     store.viewMode = 'outline'
     await nextTick()
     vi.advanceTimersByTime(300)
@@ -63,6 +64,7 @@ describe('Editor Store', () => {
     expect(restored.rasterOptions.mode).toBe('inside')
     expect(restored.viewMode).toBe('outline')
     expect(restored.direction).toBe('top-down')
+    expect(restored.shapeRoundingPolicies[circleId]).toEqual({ stitches: 'ceil', rows: null })
     expect(restored.selectedShapeId).toBe(circleId)
     expect(restored.fabricGrid).toEqual(expectedGrid)
     expect(restored.canUndo).toBe(false)
@@ -451,6 +453,35 @@ describe('Editor Store', () => {
     expect(store.direction).toBe('top-down')
   })
 
+  it('织片取整策略同步尺寸、针格和指令并支持撤销及删除清理', () => {
+    const store = useEditorStore()
+    store.addShape({
+      id: 'rounding-piece', type: 'rectangle', x: 4, y: 4, widthCm: 18.2, heightCm: 19,
+    })
+    store.setGaugeInputValue('sampleStitches', 20)
+    store.setGaugeInputValue('sampleWidthCm', 10)
+    store.setGaugeInputValue('sampleRows', 28)
+    store.setGaugeInputValue('sampleHeightCm', 10)
+
+    expect(store.selectedShapePlan?.roundingPending).toBe(true)
+    store.setShapeRoundingDirection('rounding-piece', 'stitches', 'floor')
+    store.setShapeRoundingDirection('rounding-piece', 'rows', 'ceil')
+    const plan = store.selectedShapePlan!
+    expect(store.shapeRoundingPolicies['rounding-piece']).toEqual({ stitches: 'floor', rows: 'ceil' })
+    expect(plan.roundingPending).toBe(false)
+    expect(plan.instructions).toHaveLength(54)
+    expect(plan.instructions.every((instruction) => instruction.stitchCount === 36)).toBe(true)
+
+    store.undo()
+    expect(store.shapeRoundingPolicies['rounding-piece']?.rows).toBeNull()
+    store.redo()
+    expect(store.selectedShapePlan?.instructions).toHaveLength(54)
+    store.deleteSelected()
+    expect(store.shapeRoundingPolicies['rounding-piece']).toBeUndefined()
+    store.undo()
+    expect(store.shapeRoundingPolicies['rounding-piece']).toEqual({ stitches: 'floor', rows: 'ceil' })
+  })
+
   it('最多保留最近 100 个操作步骤', () => {
     const store = useEditorStore()
     for (let value = 11; value <= 111; value += 1) {
@@ -556,6 +587,7 @@ describe('Editor Store', () => {
     store.setFabricValue('widthCm', 42)
     store.setRasterOptions({ mode: 'inside' })
     store.setShapeDirection(shapeId, 'top-down')
+    store.setShapeRoundingDirection(shapeId, 'rows', 'ceil')
     const sourceProjectId = store.activeProjectId
     const file = store.createProjectExport()!
 
@@ -570,6 +602,7 @@ describe('Editor Store', () => {
     expect(store.fabric).toEqual(file.project.document.fabric)
     expect(store.rasterOptions).toEqual(file.project.document.rasterOptions)
     expect(store.shapeDirections).toEqual(file.project.document.shapeDirections)
+    expect(store.shapeRoundingPolicies).toEqual(file.project.document.shapeRoundingPolicies)
     expect(store.canUndo).toBe(false)
   })
 

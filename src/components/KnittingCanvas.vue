@@ -30,6 +30,15 @@ import {
 } from '../core/geometry/path'
 import type { PathSymmetry } from '../core/geometry/path'
 import { describeBoundarySegmentShaping } from '../core/knitting/segmentPlanner'
+import {
+  formatCm,
+  formatDeviation,
+} from '../core/dimensions/dimensionConversion'
+import type {
+  DimensionAxis,
+  DimensionConversionResult,
+  RoundingDirection,
+} from '../core/dimensions/dimensionConversion'
 import { useEditorStore } from '../stores/editor'
 import { layoutMarkersGlobally } from './markerLayout'
 import type { LineObstacle } from './markerLayout'
@@ -94,6 +103,20 @@ interface TouchGesture {
   startPan: Point
 }
 
+interface DimensionLabelModel {
+  result: DimensionConversionResult
+  x: number
+  y: number
+  width: number
+  height: number
+  title: string
+  formula: string
+  anchorX: number
+  anchorY: number
+  side: 'left' | 'right'
+  connectorPoints: number[]
+}
+
 const store = useEditorStore()
 const {
   fabric,
@@ -133,6 +156,7 @@ let touchGesture: TouchGesture | null = null
 const touchPointers = new Map<number, Point>()
 let interactionFrameId: number | null = null
 let pendingInteractionPointer: Point | null = null
+let suppressNextStageClick = false
 
 const canvasBoundaryPadding = 24
 const annotationWidth = 264
@@ -199,6 +223,97 @@ function annotationCardTarget(name: string): { shapeId: string; segmentIndex: nu
   const segmentIndex = Number(segmentIndexText)
   return shapeId && Number.isInteger(segmentIndex) ? { shapeId, segmentIndex } : null
 }
+
+function dimensionButtonTarget(name: string): {
+  shapeId: string
+  axis: DimensionAxis
+  direction: RoundingDirection
+} | null {
+  if (!name.startsWith('dimension|')) return null
+  const [, shapeId, axis, direction] = name.split('|')
+  if (!shapeId || (axis !== 'stitches' && axis !== 'rows')) return null
+  if (direction !== 'floor' && direction !== 'ceil') return null
+  return { shapeId, axis, direction }
+}
+
+function dimensionTargetName(result: DimensionConversionResult, direction: RoundingDirection): string {
+  return `dimension|${result.shapeId}|${result.axis}|${direction}`
+}
+
+function dimensionUnit(axis: DimensionAxis): string {
+  return axis === 'stitches' ? '针' : '行'
+}
+
+function dimensionPrefix(axis: DimensionAxis): string {
+  return axis === 'stitches' ? '宽' : '高'
+}
+
+function dimensionOptionText(
+  result: DimensionConversionResult,
+  direction: RoundingDirection,
+): string {
+  const choice = result[direction]
+  const effect = direction === 'floor'
+    ? result.axis === 'stitches' ? '更窄，可能更贴身' : '更短，可能更贴身'
+    : result.axis === 'stitches' ? '更宽，松量增加' : '更长，松量增加'
+  return `${direction === 'floor' ? '向下' : '向上'} ${choice.count}${dimensionUnit(result.axis)} · ${formatCm(choice.actualCm)}cm (${formatDeviation(choice.deviationCm)})\n${effect}`
+}
+
+const dimensionLabels = computed<DimensionLabelModel[]>(() => {
+  if (viewMode.value !== 'overlay') return []
+  const drafts: Array<Omit<DimensionLabelModel, 'y' | 'connectorPoints'> & { preferredY: number }> = []
+  for (const result of shapePlans.value.flatMap((plan) => plan.dimensions)) {
+    const title = `${dimensionPrefix(result.axis)} ${formatCm(result.targetCm)}cm / ${result.selected?.count ?? '待定'}${dimensionUnit(result.axis)}`
+    const formula = result.exact
+      ? `${formatCm(result.targetCm)}cm × ${formatCm(result.densityPerCm)}${dimensionUnit(result.axis)}/cm = ${result.selected!.count}${dimensionUnit(result.axis)}`
+      : `${formatCm(result.targetCm)}cm × ${formatCm(result.densityPerCm)}${dimensionUnit(result.axis)}/cm = ${formatCm(result.rawCount)}${dimensionUnit(result.axis)}`
+    const width = stageSize.value.width < 800
+      ? Math.max(150, Math.min(210, (stageSize.value.width - 30) / 2))
+      : 260
+    const height = result.confirmed ? 48 : 96
+    const anchorX = pan.value.x + result.anchor.x * zoom.value
+    const anchorY = pan.value.y + (fabric.value.heightCm - result.anchor.y) * zoom.value
+    const relativeX = result.anchor.x - fabric.value.widthCm / 2
+    const side = relativeX < -0.001
+      ? 'left'
+      : relativeX > 0.001
+        ? 'right'
+        : (result.segmentIndex + (result.axis === 'rows' ? 1 : 0)) % 2 === 0 ? 'left' : 'right'
+    const x = side === 'left'
+      ? clamp(pan.value.x - width - 14, 8, stageSize.value.width - width - 8)
+      : clamp(pan.value.x + fabricWidthPx.value + 14, 8, stageSize.value.width - width - 8)
+    drafts.push({
+      result, x, preferredY: anchorY - height / 2, width, height, title, formula,
+      anchorX, anchorY, side,
+    })
+  }
+
+  const placeSide = (side: 'left' | 'right'): DimensionLabelModel[] => {
+    const items = drafts.filter((draft) => draft.side === side)
+      .sort((left, right) => left.preferredY - right.preferredY)
+    const gap = items.length > 1
+      ? Math.max(3, Math.min(8, (stageSize.value.height - 16 - items.reduce((sum, item) => sum + item.height, 0)) / (items.length - 1)))
+      : 0
+    let cursor = 8
+    const placed = items.map((item) => {
+      const y = Math.max(cursor, clamp(item.preferredY, 8, stageSize.value.height - item.height - 8))
+      cursor = y + item.height + gap
+      return { ...item, y }
+    })
+    const overflow = Math.max(0, (placed.at(-1)?.y ?? 0) + (placed.at(-1)?.height ?? 0) + 8 - stageSize.value.height)
+    return placed.map((item) => {
+      const y = item.y - overflow
+      const edgeX = side === 'left' ? item.x + item.width : item.x
+      return {
+        ...item,
+        y,
+        connectorPoints: [item.anchorX, item.anchorY, edgeX, y + item.height / 2],
+      }
+    })
+  }
+
+  return [...placeSide('left'), ...placeSide('right')]
+})
 
 function layoutAnnotationSide(
   drafts: AnnotationDraft[],
@@ -771,6 +886,18 @@ function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
   host.value?.focus()
   const pointer = pointerFromEvent(event)
   if (!pointer) return
+  const name = targetName(event)
+  const dimensionTarget = dimensionButtonTarget(name)
+  if (dimensionTarget) {
+    event.evt.preventDefault()
+    suppressNextStageClick = true
+    store.setShapeRoundingDirection(
+      dimensionTarget.shapeId,
+      dimensionTarget.axis,
+      dimensionTarget.direction,
+    )
+    return
+  }
 
   if (event.evt.pointerType === 'touch') {
     if (activePenPointerId !== null) return
@@ -785,7 +912,6 @@ function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
   }
   if (event.evt.pointerType === 'pen') activePenPointerId = event.evt.pointerId
 
-  const name = targetName(event)
   const isPrimaryCanvasDrag = event.evt.button === 0
     && isCanvasBackground(name)
     && (activeTool.value === 'select' || activeTool.value === 'pan')
@@ -1014,7 +1140,7 @@ function onPointerMove(event: KonvaEventObject<PointerEvent>): void {
   const name = targetName(event)
   const annotationTarget = annotationCardTarget(name)
   canvasBackgroundHovered.value = isCanvasBackground(name)
-  annotationHovered.value = Boolean(annotationTarget)
+  annotationHovered.value = Boolean(annotationTarget || dimensionButtonTarget(name))
   highlightedAnnotationKey.value = annotationTarget
     ? `${annotationTarget.shapeId}:${annotationTarget.segmentIndex}`
     : null
@@ -1062,8 +1188,12 @@ function onPointerLeave(event: KonvaEventObject<PointerEvent>): void {
 }
 
 function onStagePointerClick(event: KonvaEventObject<PointerEvent>): void {
+  if (suppressNextStageClick) {
+    suppressNextStageClick = false
+    return
+  }
   if (event.evt.pointerType === 'touch') return
-  if (annotationCardTarget(targetName(event))) return
+  if (annotationCardTarget(targetName(event)) || dimensionButtonTarget(targetName(event))) return
   if (activeTool.value !== 'polygon' && activeTool.value !== 'path') return
   const pointer = pointerFromEvent(event)
   if (!pointer) return
@@ -1485,6 +1615,61 @@ defineExpose({ fitCanvas, exportCanvas })
             fill: 'rgba(40, 125, 114, 0.14)', dash: [3, 2], listening: false,
           }" />
         </v-group>
+
+        <template v-if="viewMode === 'overlay'">
+          <v-line v-for="label in dimensionLabels" :key="`${label.result.id}-connector`"
+            :config="{
+              points: label.connectorPoints, stroke: label.result.confirmed ? '#5d897c' : '#b77633',
+              strokeWidth: 1, dash: [4, 3], opacity: .72, listening: false,
+            }" />
+          <v-group v-for="label in dimensionLabels" :key="label.result.id"
+            :config="{ x: label.x, y: label.y }">
+            <v-rect :config="{
+              width: label.width, height: label.height,
+              fill: 'rgba(255,253,248,.97)', stroke: label.result.confirmed ? '#79a093' : '#c88338',
+              strokeWidth: 1.2, cornerRadius: 9, shadowColor: '#40382f', shadowBlur: 8,
+              shadowOpacity: .16, shadowOffsetY: 2, listening: false,
+            }" />
+            <v-text :config="{
+              x: 10, y: 7, width: label.width - 20, height: 18, text: label.title,
+              fill: '#263d36', fontSize: 12, fontStyle: 'bold', listening: false,
+            }" />
+            <v-text :config="{
+              x: 10, y: 25, width: label.width - 20, height: 16, text: label.formula,
+              fill: '#68716c', fontSize: 9, listening: false,
+            }" />
+            <template v-if="!label.result.confirmed">
+              <v-text :config="{
+                x: 10, y: 41, width: label.width - 20, height: 13,
+                text: '取整待确认 · 将应用到本织片所有' + (label.result.axis === 'stitches' ? '横向' : '纵向') + '尺寸',
+                fill: '#a24c35', fontSize: 9, fontStyle: 'bold', listening: false,
+              }" />
+              <v-group v-for="(roundingDirection, optionIndex) in (['floor', 'ceil'] as const)"
+                :key="roundingDirection" :config="{
+                  x: 7 + optionIndex * ((label.width - 20) / 2 + 6), y: 55,
+                }">
+                <v-rect :config="{
+                  name: dimensionTargetName(label.result, roundingDirection),
+                  width: (label.width - 20) / 2, height: 34,
+                  fill: roundingDirection === 'floor' ? '#f3eee4' : '#e3efeb',
+                  stroke: roundingDirection === 'floor' ? '#c1aa83' : '#7fa597',
+                  strokeWidth: 1, cornerRadius: 6,
+                }" />
+                <v-text :config="{
+                  name: dimensionTargetName(label.result, roundingDirection),
+                  x: 4, y: 3, width: (label.width - 20) / 2 - 8, height: 29,
+                  text: dimensionOptionText(label.result, roundingDirection),
+                  fill: '#35433d', fontSize: 7, lineHeight: 1.3, align: 'center',
+                }" />
+              </v-group>
+            </template>
+            <v-text v-else :config="{
+              x: 10, y: 39, width: label.width - 20, height: 10,
+              text: label.result.exact ? '精确整数' : '实际 ' + formatCm(label.result.selected!.actualCm) + 'cm · 偏差 ' + formatDeviation(label.result.selected!.deviationCm),
+              fill: label.result.exact ? '#52756b' : '#87592f', fontSize: 8, listening: false,
+            }" />
+          </v-group>
+        </template>
 
         <template v-if="viewMode === 'outline' || viewMode === 'grid'">
           <v-line v-for="annotation in shapingAnnotations" :key="`${annotation.key}-connector`"

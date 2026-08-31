@@ -3,11 +3,12 @@ import type { PathNode, Point, Shape } from '../core/geometry/shape.types'
 import type { KnitDirection } from '../core/knitting/planner.types'
 import type { RasterOptions } from '../core/raster/raster.types'
 import type { ViewMode } from './editor.types'
+import type { ShapeRoundingPolicy } from '../core/dimensions/dimensionConversion'
 
 /** Legacy single-document key. Kept only for one-time migration. */
 export const EDITOR_STORAGE_KEY = 'knitting-pattern-planner:editor:v1'
 export const PROJECT_LIBRARY_STORAGE_KEY = 'knitting-pattern-planner:projects:v1'
-export const EDITOR_DOCUMENT_VERSION = 1
+export const EDITOR_DOCUMENT_VERSION = 2
 export const PROJECT_LIBRARY_VERSION = 1
 export const MAX_PROJECTS = 5
 export const EDITOR_AUTOSAVE_DELAY_MS = 300
@@ -19,6 +20,7 @@ export interface PersistedEditorDocument {
   fabric: FabricCanvas
   shapes: Shape[]
   shapeDirections: Record<string, KnitDirection>
+  shapeRoundingPolicies: Record<string, ShapeRoundingPolicy>
   rasterOptions: RasterOptions
   /** Optional for compatibility with projects saved before display-mode persistence. */
   viewMode?: ViewMode
@@ -123,6 +125,14 @@ function isShapeDirections(value: unknown): value is Record<string, KnitDirectio
   )
 }
 
+function isShapeRoundingPolicies(value: unknown): value is Record<string, ShapeRoundingPolicy> {
+  return isRecord(value) && Object.values(value).every((policy) =>
+    isRecord(policy)
+    && (policy.stitches === null || policy.stitches === 'floor' || policy.stitches === 'ceil')
+    && (policy.rows === null || policy.rows === 'floor' || policy.rows === 'ceil'),
+  )
+}
+
 function isRasterOptions(value: unknown): value is RasterOptions {
   return isRecord(value)
     && (value.mode === 'center' || value.mode === 'inside' || value.mode === 'outside')
@@ -146,6 +156,7 @@ export function isPersistedEditorDocument(value: unknown): value is PersistedEdi
     || !Array.isArray(value.shapes)
     || !value.shapes.every(isShape)
     || !isShapeDirections(value.shapeDirections)
+    || !isShapeRoundingPolicies(value.shapeRoundingPolicies)
     || !isRasterOptions(value.rasterOptions)
     || (value.viewMode !== undefined
       && value.viewMode !== 'outline'
@@ -154,7 +165,18 @@ export function isPersistedEditorDocument(value: unknown): value is PersistedEdi
     || !isOptionalId(value.selectedShapeId)
     || !isOptionalId(value.selectedPlanShapeId)) return false
 
-  return new Set(value.shapes.map((shape) => shape.id)).size === value.shapes.length
+  const shapeIds = new Set(value.shapes.map((shape) => shape.id))
+  return shapeIds.size === value.shapes.length
+    && Object.keys(value.shapeDirections).every((shapeId) => shapeIds.has(shapeId))
+    && Object.keys(value.shapeRoundingPolicies).every((shapeId) => shapeIds.has(shapeId))
+}
+
+export function migrateEditorDocument(value: unknown): PersistedEditorDocument | null {
+  if (!isRecord(value)) return null
+  if (value.version === 1) {
+    value = { ...value, version: EDITOR_DOCUMENT_VERSION, shapeRoundingPolicies: {} }
+  }
+  return isPersistedEditorDocument(value) ? value : null
 }
 
 function isPersistedProject(value: unknown): value is PersistedProject {
@@ -189,7 +211,8 @@ export function loadEditorDocument(
 ): PersistedEditorDocument | null {
   const value = readStorageValue(storage, EDITOR_STORAGE_KEY)
   if (value === null) return null
-  if (isPersistedEditorDocument(value)) return value
+  const document = migrateEditorDocument(value)
+  if (document) return document
   try { storage?.removeItem(EDITOR_STORAGE_KEY) } catch { /* startup must continue */ }
   return null
 }
@@ -219,10 +242,13 @@ export function loadProjectLibrary(
   }
 
   const seen = new Set<string>()
-  const projects = value.projects.filter((project): project is PersistedProject => {
-    if (!isPersistedProject(project) || seen.has(project.id)) return false
+  const projects = value.projects.flatMap((candidate): PersistedProject[] => {
+    if (!isRecord(candidate) || !isRecord(candidate.document)) return []
+    const document = migrateEditorDocument(candidate.document)
+    const project = document ? { ...candidate, document } : candidate
+    if (!isPersistedProject(project) || seen.has(project.id)) return []
     seen.add(project.id)
-    return true
+    return [project]
   }).slice(0, MAX_PROJECTS)
   if (!projects.length) return null
 

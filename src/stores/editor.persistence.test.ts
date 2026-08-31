@@ -59,6 +59,7 @@ function documentFixture(): PersistedEditorDocument {
       heightCm: 50,
     }],
     shapeDirections: { 'front-piece': 'top-down' },
+    shapeRoundingPolicies: { 'front-piece': { stitches: 'ceil', rows: null } },
     rasterOptions: { mode: 'inside', symmetryOptimization: false },
     viewMode: 'outline',
     selectedShapeId: 'front-piece',
@@ -83,6 +84,18 @@ function libraryFixture(): PersistedProjectLibrary {
 afterEach(() => vi.useRealTimers())
 
 describe('编辑器本地持久化', () => {
+  it('将 v1 文档迁移为双轴均未确认的 v2 文档', () => {
+    const storage = new MemoryStorage()
+    const legacy = { ...documentFixture(), version: 1 }
+    delete (legacy as Partial<PersistedEditorDocument>).shapeRoundingPolicies
+    storage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(legacy))
+
+    expect(loadEditorDocument(storage)).toMatchObject({
+      version: EDITOR_DOCUMENT_VERSION,
+      shapeRoundingPolicies: {},
+    })
+  })
+
   it('可保存并读取版本化文档', () => {
     const storage = new MemoryStorage()
     const document = documentFixture()
@@ -93,7 +106,7 @@ describe('编辑器本地持久化', () => {
 
   it.each([
     '{broken json',
-    JSON.stringify({ ...documentFixture(), version: 2 }),
+    JSON.stringify({ ...documentFixture(), version: 99 }),
     JSON.stringify({ ...documentFixture(), shapes: [{ id: 'bad', type: 'circle', radiusCm: -1 }] }),
     JSON.stringify({ ...documentFixture(), viewMode: 'unknown' }),
   ])('损坏、不支持或非法的存档会被删除并安全回退', (serialized) => {

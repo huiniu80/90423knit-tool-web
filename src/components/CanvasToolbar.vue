@@ -26,6 +26,7 @@ const selectedPlanOverview = computed(() => {
   return {
     castOnStitches: first.stitchCount,
     totalRows: plan.instructions.length,
+    roundingPending: plan.roundingPending,
   }
 })
 
@@ -96,6 +97,7 @@ function changeZoom(delta: number): void {
     <div class="toolbar-summary" aria-live="polite">
       <b v-if="selectedPlanOverview">
         起针 {{ selectedPlanOverview.castOnStitches }} 针 · 共 {{ selectedPlanOverview.totalRows }} 行
+        <em v-if="selectedPlanOverview.roundingPending"> · 取整待确认</em>
       </b>
       <b v-else>{{ fabricGrid.columnCount }} 针 × {{ fabricGrid.rowCount }} 行</b>
       <span>画布 {{ fabricGrid.columnCount }} 针 × {{ fabricGrid.rowCount }} 行 · 原点在左下角</span>
@@ -122,3 +124,7 @@ function changeZoom(delta: number): void {
     </button>
   </div>
 </template>
+
+<style scoped>
+.toolbar-summary em { color: #a44d39; font-size: inherit; font-style: normal; }
+</style>

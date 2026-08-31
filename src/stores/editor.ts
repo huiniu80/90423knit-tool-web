@@ -1,6 +1,15 @@
 import { computed, onScopeDispose, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { calculateFabricGrid, calculateGauge } from '../core/gauge/gauge'
+import {
+  createShapeDimensionResults,
+  selectedShapeCounts,
+} from '../core/dimensions/dimensionConversion'
+import type {
+  DimensionAxis,
+  RoundingDirection,
+  ShapeRoundingPolicy,
+} from '../core/dimensions/dimensionConversion'
 import type { GaugeInput, FabricCanvas } from '../core/gauge/gauge.types'
 import type { PathNode, PathShape, Point, Shape, ShapeType } from '../core/geometry/shape.types'
 import { joinConnectedOpenPaths } from '../core/geometry/path'
@@ -48,6 +57,7 @@ interface HistorySnapshot {
   fabric: FabricCanvas
   shapes: Shape[]
   shapeDirections: Record<string, KnitDirection>
+  shapeRoundingPolicies: Record<string, ShapeRoundingPolicy>
   rasterOptions: RasterOptions
   selectedShapeId: string | null
   selectedPlanShapeId: string | null
@@ -92,6 +102,7 @@ export const useEditorStore = defineStore('editor', () => {
       fabric: clonePlain(defaultFabric),
       shapes: [],
       shapeDirections: {},
+      shapeRoundingPolicies: {},
       rasterOptions: clonePlain(defaultRasterOptions),
       viewMode: 'overlay',
       selectedShapeId: null,
@@ -149,6 +160,9 @@ export const useEditorStore = defineStore('editor', () => {
   const zoom = ref(20)
   const shapeDirections = ref<Record<string, KnitDirection>>(
     clonePlain(persistedDocument?.shapeDirections ?? {}),
+  )
+  const shapeRoundingPolicies = ref<Record<string, ShapeRoundingPolicy>>(
+    clonePlain(persistedDocument?.shapeRoundingPolicies ?? {}),
   )
   const rasterOptions = ref<RasterOptions>(
     clonePlain(persistedDocument?.rasterOptions ?? defaultRasterOptions),
@@ -211,14 +225,25 @@ export const useEditorStore = defineStore('editor', () => {
 
     return shapes.value.map((shape) => {
       const isFabric = isFabricShape(shape)
+      const policy = shapeRoundingPolicies.value[shape.id] ?? { stitches: null, rows: null }
+      const shapeRasterKey = [
+        rasterKey,
+        directionForShape(shape.id),
+        policy.stitches ?? 'pending',
+        policy.rows ?? 'pending',
+      ].join('|')
       const cached = rasterCache.get(shape.id)
-      if (cached?.shape === shape && cached.rasterKey === rasterKey) {
+      if (cached?.shape === shape && cached.rasterKey === shapeRasterKey) {
         return { shape, rows: cached.rows, isFabric }
       }
+      const counts = selectedShapeCounts(shape, gauge.value, policy)
       const rows = isFabric
-        ? rasterize(shape, gauge.value, fabric.value, rasterOptions.value)
+        ? rasterize(shape, gauge.value, fabric.value, rasterOptions.value, {
+            ...counts,
+            direction: directionForShape(shape.id),
+          })
         : rasterizeShapes([], gauge.value, fabric.value, rasterOptions.value)
-      rasterCache.set(shape.id, { shape, rasterKey, rows })
+      rasterCache.set(shape.id, { shape, rasterKey: shapeRasterKey, rows })
       return { shape, rows, isFabric }
     })
   })
@@ -249,6 +274,11 @@ export const useEditorStore = defineStore('editor', () => {
     if (planInstructions !== cachedInstructions?.instructions) {
       instructionCache.set(shape.id, { rows, direction: shapeDirection, instructions: planInstructions })
     }
+    const dimensions = createShapeDimensionResults(
+      shape,
+      gauge.value,
+      shapeRoundingPolicies.value[shape.id] ?? { stitches: null, rows: null },
+    )
     return {
       shapeId: shape.id,
       shapeName: shape.name,
@@ -259,6 +289,8 @@ export const useEditorStore = defineStore('editor', () => {
       totalStitches: planInstructions.reduce((sum, item) => sum + item.stitchCount, 0),
       hasSeparatedRegions: rows.some((row) => row.segments.length > 1),
       isFabric,
+      dimensions,
+      roundingPending: dimensions.some((dimension) => !dimension.confirmed),
     }
   }))
   const selectedShapePlan = computed(() =>
@@ -288,6 +320,9 @@ export const useEditorStore = defineStore('editor', () => {
     const validDirections = Object.fromEntries(
       Object.entries(shapeDirections.value).filter(([shapeId]) => shapeIds.has(shapeId)),
     )
+    const validRoundingPolicies = Object.fromEntries(
+      Object.entries(shapeRoundingPolicies.value).filter(([shapeId]) => shapeIds.has(shapeId)),
+    )
 
     return {
       version: EDITOR_DOCUMENT_VERSION,
@@ -296,6 +331,7 @@ export const useEditorStore = defineStore('editor', () => {
       fabric: clonePlain(fabric.value),
       shapes: cloneShapes(shapes.value),
       shapeDirections: validDirections,
+      shapeRoundingPolicies: validRoundingPolicies,
       rasterOptions: clonePlain(rasterOptions.value),
       viewMode: viewMode.value,
       selectedShapeId: validSelection(selectedShapeId.value),
@@ -331,6 +367,7 @@ export const useEditorStore = defineStore('editor', () => {
       gaugeInput,
       fabric,
       shapeDirections,
+      shapeRoundingPolicies,
       rasterOptions,
       viewMode,
       selectedShapeId,
@@ -354,6 +391,7 @@ export const useEditorStore = defineStore('editor', () => {
       fabric: clonePlain(fabric.value),
       shapes: cloneShapes(shapes.value),
       shapeDirections: clonePlain(shapeDirections.value),
+      shapeRoundingPolicies: clonePlain(shapeRoundingPolicies.value),
       rasterOptions: clonePlain(rasterOptions.value),
       selectedShapeId: selectedShapeId.value,
       selectedPlanShapeId: selectedPlanShapeId.value,
@@ -379,6 +417,9 @@ export const useEditorStore = defineStore('editor', () => {
     }
     if (JSON.stringify(shapeDirections.value) !== JSON.stringify(snapshot.shapeDirections)) {
       shapeDirections.value = clonePlain(snapshot.shapeDirections)
+    }
+    if (JSON.stringify(shapeRoundingPolicies.value) !== JSON.stringify(snapshot.shapeRoundingPolicies)) {
+      shapeRoundingPolicies.value = clonePlain(snapshot.shapeRoundingPolicies)
     }
     if (JSON.stringify(rasterOptions.value) !== JSON.stringify(snapshot.rasterOptions)) {
       rasterOptions.value = clonePlain(snapshot.rasterOptions)
@@ -472,6 +513,21 @@ export const useEditorStore = defineStore('editor', () => {
     }
   }
 
+  function setShapeRoundingDirection(
+    shapeId: string,
+    axis: DimensionAxis,
+    direction: RoundingDirection,
+  ): void {
+    if (!shapes.value.some((shape) => shape.id === shapeId)) return
+    const current = shapeRoundingPolicies.value[shapeId] ?? { stitches: null, rows: null }
+    if (current[axis] === direction) return
+    pushUndo(captureHistorySnapshot())
+    shapeRoundingPolicies.value = {
+      ...shapeRoundingPolicies.value,
+      [shapeId]: { ...current, [axis]: direction },
+    }
+  }
+
   function addDefaultShape(type: Exclude<ShapeType, 'polygon' | 'path'>): void {
     const centerX = fabric.value.widthCm / 2
     const centerY = fabric.value.heightCm / 2
@@ -541,6 +597,14 @@ export const useEditorStore = defineStore('editor', () => {
     }
 
     shapes.value = shapes.value.filter((shape) => !joinedShapeIds.has(shape.id))
+    if (joinedShapeIds.size) {
+      shapeDirections.value = Object.fromEntries(
+        Object.entries(shapeDirections.value).filter(([shapeId]) => !joinedShapeIds.has(shapeId)),
+      )
+      shapeRoundingPolicies.value = Object.fromEntries(
+        Object.entries(shapeRoundingPolicies.value).filter(([shapeId]) => !joinedShapeIds.has(shapeId)),
+      )
+    }
     shapes.value.push(path)
     selectedShapeId.value = path.id
     selectedPlanShapeId.value = path.id
@@ -621,6 +685,10 @@ export const useEditorStore = defineStore('editor', () => {
     if (!deletedShape) return
     pushUndo(captureHistorySnapshot())
     shapes.value = shapes.value.filter((shape) => shape.id !== deletedShape.id)
+    const { [deletedShape.id]: _deletedPolicy, ...remainingPolicies } = shapeRoundingPolicies.value
+    shapeRoundingPolicies.value = remainingPolicies
+    const { [deletedShape.id]: _deletedDirection, ...remainingDirections } = shapeDirections.value
+    shapeDirections.value = remainingDirections
     selectedShapeId.value = shapes.value.at(-1)?.id ?? null
     ensureSelectedPlan()
     shapesRevision.value += 1
@@ -650,6 +718,7 @@ export const useEditorStore = defineStore('editor', () => {
     fabric.value = clonePlain(document.fabric)
     shapes.value = nextShapes
     shapeDirections.value = clonePlain(document.shapeDirections)
+    shapeRoundingPolicies.value = clonePlain(document.shapeRoundingPolicies ?? {})
     rasterOptions.value = clonePlain(document.rasterOptions)
     viewMode.value = document.viewMode ?? 'overlay'
     selectedShapeId.value = validSelection(document.selectedShapeId)
@@ -870,6 +939,7 @@ export const useEditorStore = defineStore('editor', () => {
     zoom,
     direction,
     shapeDirections,
+    shapeRoundingPolicies,
     rasterOptions,
     activeTool,
     viewMode,
@@ -896,6 +966,7 @@ export const useEditorStore = defineStore('editor', () => {
     setRasterOptions,
     addShape,
     setShapeDirection,
+    setShapeRoundingDirection,
     addDefaultShape,
     addPolygon,
     addPath,
