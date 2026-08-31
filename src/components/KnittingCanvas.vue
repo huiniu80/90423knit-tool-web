@@ -1312,7 +1312,7 @@ defineExpose({ fitCanvas, exportCanvas })
 
           <template v-if="showRasterFill">
             <v-rect v-for="band in rasterBands" :key="band.key" :config="{
-              ...band, fill: '#263d36', opacity: viewMode === 'overlay' ? 0.7 : 0.92,
+              ...band, fill: '#8eada1', opacity: viewMode === 'overlay' ? 0.4 : 0.64,
             }" />
           </template>
 
