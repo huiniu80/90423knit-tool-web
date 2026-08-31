@@ -30,6 +30,7 @@ import {
 import type { PathSymmetry } from '../core/geometry/path'
 import { describeBoundarySegmentShaping } from '../core/knitting/segmentPlanner'
 import { useEditorStore } from '../stores/editor'
+import { layoutMarkersGlobally } from './markerLayout'
 
 type Corner = 'nw' | 'ne' | 'se' | 'sw'
 type Interaction =
@@ -58,6 +59,7 @@ interface AnnotationDraft {
 }
 
 interface CanvasMarker {
+  id: string
   label: string
   x: number
   y: number
@@ -138,7 +140,6 @@ const annotationPaddingY = 10
 const annotationViewportMargin = 14
 const annotationCollisionGap = 10
 const annotationFabricGap = 42
-const markerCollisionGap = 4
 
 function clonePlain<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -232,42 +233,6 @@ function markerRadius(label: string): number {
 
 function markerFontSize(label: string): number {
   return label.length > 1 ? 11 : 13
-}
-
-function layoutCanvasMarkers(
-  markers: Array<{ label: string; x: number; y: number }>,
-  side: 'left' | 'right',
-): CanvasMarker[] {
-  const placed: CanvasMarker[] = []
-  const outward = side === 'left' ? -1 : 1
-  const ordered = [...markers].sort((left, right) => left.y - right.y || left.x - right.x)
-
-  for (const marker of ordered) {
-    const radius = markerRadius(marker.label)
-    const step = radius * 2 + markerCollisionGap
-    const candidates = [{ x: marker.x, y: marker.y }]
-    for (let level = 1; level <= markers.length + 1; level += 1) {
-      const x = marker.x + outward * Math.min(16, level * 8)
-      candidates.push(
-        { x, y: marker.y - step * level },
-        { x, y: marker.y + step * level },
-      )
-    }
-    const position = candidates.find((candidate) => placed.every((other) =>
-      Math.hypot(candidate.x - other.x, candidate.y - other.y)
-        >= radius + markerRadius(other.label) + markerCollisionGap,
-    )) ?? candidates.at(-1)!
-
-    placed.push({
-      ...marker,
-      x: position.x,
-      y: position.y,
-      anchorX: marker.x,
-      anchorY: marker.y,
-    })
-  }
-
-  return placed
 }
 
 function markerWasDisplaced(marker: CanvasMarker): boolean {
@@ -389,11 +354,14 @@ const shapingAnnotations = computed<ShapingAnnotation[]>(() => {
         ? annotationViewportMargin
         : stageSize.value.width - annotationViewportMargin - annotationWidth,
       preferredY: anchorY - model.height / 2,
-      markers: layoutCanvasMarkers(model.markers.map((marker) => ({
+      markers: model.markers.map((marker, markerIndex) => ({
+        id: `${model.key}-marker-${markerIndex}`,
         label: marker.label,
         x: pan.value.x + marker.point.x * zoom.value,
         y: pan.value.y + (fabric.value.heightCm - marker.point.y) * zoom.value,
-      })), model.side),
+        anchorX: pan.value.x + marker.point.x * zoom.value,
+        anchorY: pan.value.y + (fabric.value.heightCm - marker.point.y) * zoom.value,
+      })),
     }
   })
 
@@ -401,8 +369,43 @@ const shapingAnnotations = computed<ShapingAnnotation[]>(() => {
     ...layoutAnnotationSide(drafts.filter((draft) => draft.side === 'left')),
     ...layoutAnnotationSide(drafts.filter((draft) => draft.side === 'right')),
   ]
+  const positionedMarkers = layoutMarkersGlobally(
+    placed.flatMap((annotation) => annotation.markers.map((marker) => ({
+      id: marker.id,
+      label: marker.label,
+      anchorX: marker.anchorX,
+      anchorY: marker.anchorY,
+      radius: markerRadius(marker.label),
+      side: annotation.side,
+    }))),
+    {
+      bounds: {
+        left: annotationViewportMargin,
+        top: annotationViewportMargin,
+        right: stageSize.value.width - annotationViewportMargin,
+        bottom: stageSize.value.height - annotationViewportMargin,
+      },
+      circleObstacles: placed.map((annotation) => ({
+        x: annotation.anchorX,
+        y: annotation.anchorY,
+        radius: 12,
+      })),
+      rectangleObstacles: placed.map((annotation) => ({
+        x: annotation.x,
+        y: annotation.y,
+        width: annotation.width,
+        height: annotation.height,
+      })),
+    },
+  )
+  const markerPositionById = new Map(positionedMarkers.map((marker) => [marker.id, marker]))
+
   return placed.map((annotation) => ({
     ...annotation,
+    markers: annotation.markers.map((marker) => {
+      const position = markerPositionById.get(marker.id)
+      return position ? { ...marker, x: position.x, y: position.y } : marker
+    }),
     connectorPoints: connectorPoints(annotation),
   }))
 })
@@ -1426,32 +1429,13 @@ defineExpose({ fitCanvas, exportCanvas })
               opacity: annotationIsHighlighted(annotation.key) ? 0.9 : 0.62,
               dash: [5, 4], lineCap: 'round', lineJoin: 'round', listening: false,
             }" />
-          <template v-for="annotation in shapingAnnotations" :key="`${annotation.key}-markers`">
-            <v-group v-for="(marker, markerIndex) in annotation.markers"
-              :key="`${annotation.key}-marker-${markerIndex}`"
-              :config="{ listening: false }">
-              <v-line v-if="markerWasDisplaced(marker)" :config="{
+          <template v-for="annotation in shapingAnnotations" :key="`${annotation.key}-marker-lines`">
+            <v-line v-for="marker in annotation.markers" v-show="markerWasDisplaced(marker)"
+              :key="`${marker.id}-line`" :config="{
                 points: [marker.anchorX, marker.anchorY, marker.x, marker.y],
                 stroke: annotationIsHighlighted(annotation.key) ? '#b24631' : '#176f61',
                 strokeWidth: 1.4, lineCap: 'round', listening: false,
               }" />
-              <v-circle :config="{
-                x: marker.x, y: marker.y, radius: markerRadius(marker.label),
-                fill: annotationIsHighlighted(annotation.key) ? '#b24631' : '#176f61',
-                stroke: '#fffdf8', strokeWidth: 2,
-                shadowColor: '#263d36', shadowBlur: 5, shadowOpacity: 0.24,
-              }" />
-              <v-text :config="{
-                x: marker.x - markerRadius(marker.label),
-                y: marker.y - markerRadius(marker.label),
-                width: markerRadius(marker.label) * 2,
-                height: markerRadius(marker.label) * 2,
-                text: marker.label,
-                align: 'center', verticalAlign: 'middle', fill: '#fffdf8',
-                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                fontSize: markerFontSize(marker.label), fontStyle: 'bold', listening: false,
-              }" />
-            </v-group>
           </template>
           <v-group v-for="annotation in shapingAnnotations" :key="annotation.key"
             :config="{ x: annotation.anchorX, y: annotation.anchorY, listening: false }">
@@ -1521,6 +1505,28 @@ defineExpose({ fitCanvas, exportCanvas })
                 verticalAlign: 'middle', listening: false,
               }" />
           </v-group>
+
+          <template v-for="annotation in shapingAnnotations" :key="`${annotation.key}-markers`">
+            <v-group v-for="marker in annotation.markers"
+              :key="marker.id" :config="{ listening: false }">
+              <v-circle :config="{
+                x: marker.x, y: marker.y, radius: markerRadius(marker.label),
+                fill: annotationIsHighlighted(annotation.key) ? '#b24631' : '#176f61',
+                stroke: '#fffdf8', strokeWidth: 2,
+                shadowColor: '#263d36', shadowBlur: 5, shadowOpacity: 0.24,
+              }" />
+              <v-text :config="{
+                x: marker.x - markerRadius(marker.label),
+                y: marker.y - markerRadius(marker.label),
+                width: markerRadius(marker.label) * 2,
+                height: markerRadius(marker.label) * 2,
+                text: marker.label,
+                align: 'center', verticalAlign: 'middle', fill: '#fffdf8',
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                fontSize: markerFontSize(marker.label), fontStyle: 'bold', listening: false,
+              }" />
+            </v-group>
+          </template>
         </template>
       </v-layer>
       </v-stage>
