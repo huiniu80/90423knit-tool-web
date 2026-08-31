@@ -177,7 +177,7 @@ describe('Knitting Planner', () => {
     expect(bottomUp.map((step) => step.startSourceRowIndex)).toEqual([1, 2])
     expect(topDown.map((step) => step.startSourceRowIndex)).toEqual([1, 0])
     expect(bottomUp.map((step) => step.order)).toEqual([1, 2])
-    expect(stepNumberLabel(bottomUp[0]!.order)).toBe('①')
+    expect(stepNumberLabel(bottomUp[0]!.order)).toBe('1')
     expect(shapingSequenceStepToText(bottomUp[0]!)).toBe('第 1–2 行：每 2 行加 1 针，共 1 次')
   })
 

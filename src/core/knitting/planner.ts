@@ -254,11 +254,7 @@ export function generateGarmentEdgeShapingSequence(
 }
 
 export function stepNumberLabel(order: number): string {
-  const labels = [
-    '①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩',
-    '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳',
-  ]
-  return labels[order - 1] ?? `[${order}]`
+  return String(order)
 }
 
 export function shapingSequenceStepToText(step: ShapingSequenceStep): string {

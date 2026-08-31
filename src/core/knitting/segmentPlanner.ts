@@ -220,7 +220,7 @@ export function describeBoundarySegmentShaping(
     left.startRowNumber - right.startRowNumber || edges.indexOf(left.edge) - edges.indexOf(right.edge),
   )
   const numberedSteps = steps.map((step, index) => ({ ...step, order: index + 1 }))
-  const orderText = numberedSteps.map((step) => stepNumberLabel(step.order)).join('→')
+  const orderText = numberedSteps.map((step) => stepNumberLabel(step.order)).join(' → ')
   const totalChangedStitches = numberedSteps.reduce(
     (sum, step) => sum + step.stitchCount * step.repeatCount,
     0,
@@ -230,7 +230,7 @@ export function describeBoundarySegmentShaping(
     ? [
         `${outerTitle ?? (edges.length > 1 ? '圆领塑形' : shortEdgeLabels[edge])} · 按 ${orderText} 编织`,
         ...numberedSteps.map((step) =>
-          `${stepNumberLabel(step.order)} ${compactStepText(step, edges.length > 1)}`,
+          `${stepNumberLabel(step.order)}. ${compactStepText(step, edges.length > 1)}`,
         ),
         ...(edges.length === 1 ? [`该侧共${numberedSteps[0]?.operation === 'increase' ? '加' : '减'} ${totalChangedStitches} 针`] : []),
       ]

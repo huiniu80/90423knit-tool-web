@@ -35,7 +35,8 @@ describe('分段加减针说明', () => {
     expect(description.lines.some((line) => line.includes('右肩领口侧'))).toBe(true)
     expect(description.lines.some((line) => line.includes('减'))).toBe(true)
     expect(description.lines.some((line) => line.includes('加'))).toBe(false)
-    expect(description.lines.some((line) => line.includes('按 ①'))).toBe(true)
+    expect(description.lines.some((line) => line.includes('按 1 →'))).toBe(true)
+    expect(description.lines.some((line) => line.startsWith('1. '))).toBe(true)
     expect(description.markers[0]?.label).toBe('1')
     expect(description.markers.every((marker, index) =>
       index === 0 || marker.point.y >= description.markers[index - 1]!.point.y,
