@@ -2,6 +2,7 @@ import type { GaugeInput, FabricCanvas } from '../core/gauge/gauge.types'
 import type { PathNode, Point, Shape } from '../core/geometry/shape.types'
 import type { KnitDirection } from '../core/knitting/planner.types'
 import type { RasterOptions } from '../core/raster/raster.types'
+import type { ViewMode } from './editor.types'
 
 /** Legacy single-document key. Kept only for one-time migration. */
 export const EDITOR_STORAGE_KEY = 'knitting-pattern-planner:editor:v1'
@@ -19,6 +20,8 @@ export interface PersistedEditorDocument {
   shapes: Shape[]
   shapeDirections: Record<string, KnitDirection>
   rasterOptions: RasterOptions
+  /** Optional for compatibility with projects saved before display-mode persistence. */
+  viewMode?: ViewMode
   selectedShapeId: string | null
   selectedPlanShapeId: string | null
 }
@@ -144,6 +147,10 @@ export function isPersistedEditorDocument(value: unknown): value is PersistedEdi
     || !value.shapes.every(isShape)
     || !isShapeDirections(value.shapeDirections)
     || !isRasterOptions(value.rasterOptions)
+    || (value.viewMode !== undefined
+      && value.viewMode !== 'outline'
+      && value.viewMode !== 'grid'
+      && value.viewMode !== 'overlay')
     || !isOptionalId(value.selectedShapeId)
     || !isOptionalId(value.selectedPlanShapeId)) return false
 

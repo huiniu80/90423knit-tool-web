@@ -93,6 +93,7 @@ export const useEditorStore = defineStore('editor', () => {
       shapes: [],
       shapeDirections: {},
       rasterOptions: clonePlain(defaultRasterOptions),
+      viewMode: 'overlay',
       selectedShapeId: null,
       selectedPlanShapeId: null,
     }
@@ -153,7 +154,7 @@ export const useEditorStore = defineStore('editor', () => {
     clonePlain(persistedDocument?.rasterOptions ?? defaultRasterOptions),
   )
   const activeTool = ref<EditorTool>('path')
-  const viewMode = ref<ViewMode>('overlay')
+  const viewMode = ref<ViewMode>(persistedDocument?.viewMode ?? 'overlay')
   const draftPoints = ref<Point[]>([])
   const draftPathNodes = ref<PathNode[]>([])
   const draftTool = ref<'polygon' | 'path' | null>(null)
@@ -296,6 +297,7 @@ export const useEditorStore = defineStore('editor', () => {
       shapes: cloneShapes(shapes.value),
       shapeDirections: validDirections,
       rasterOptions: clonePlain(rasterOptions.value),
+      viewMode: viewMode.value,
       selectedShapeId: validSelection(selectedShapeId.value),
       selectedPlanShapeId: validSelection(selectedPlanShapeId.value),
     }
@@ -330,6 +332,7 @@ export const useEditorStore = defineStore('editor', () => {
       fabric,
       shapeDirections,
       rasterOptions,
+      viewMode,
       selectedShapeId,
       selectedPlanShapeId,
       shapesRevision,
@@ -648,6 +651,7 @@ export const useEditorStore = defineStore('editor', () => {
     shapes.value = nextShapes
     shapeDirections.value = clonePlain(document.shapeDirections)
     rasterOptions.value = clonePlain(document.rasterOptions)
+    viewMode.value = document.viewMode ?? 'overlay'
     selectedShapeId.value = validSelection(document.selectedShapeId)
     selectedPlanShapeId.value = validSelection(document.selectedPlanShapeId)
       ?? selectedShapeId.value

@@ -48,6 +48,7 @@ describe('Editor Store', () => {
     store.setFabricValue('widthCm', 42)
     store.setRasterOptions({ mode: 'inside' })
     store.setShapeDirection(circleId, 'top-down')
+    store.viewMode = 'outline'
     await nextTick()
     vi.advanceTimersByTime(300)
     expect(storage.getItem(PROJECT_LIBRARY_STORAGE_KEY)).not.toBeNull()
@@ -60,6 +61,7 @@ describe('Editor Store', () => {
     expect(restored.gaugeInput.sampleStitches).toBe(18)
     expect(restored.fabric.widthCm).toBe(42)
     expect(restored.rasterOptions.mode).toBe('inside')
+    expect(restored.viewMode).toBe('outline')
     expect(restored.direction).toBe('top-down')
     expect(restored.selectedShapeId).toBe(circleId)
     expect(restored.fabricGrid).toEqual(expectedGrid)
@@ -86,7 +88,7 @@ describe('Editor Store', () => {
     restored.$dispose()
   })
 
-  it('刷新只恢复完成内容，不恢复绘制草稿和界面状态', async () => {
+  it('刷新恢复显示模式，但不恢复绘制草稿、缩放和当前工具', async () => {
     vi.useFakeTimers()
     const storage = new MemoryStorage()
     stubBrowser(storage)
@@ -105,7 +107,7 @@ describe('Editor Store', () => {
     expect(restored.gaugeInput.sampleRows).toBe(16)
     expect(restored.draftPathNodes).toEqual([])
     expect(restored.zoom).toBe(20)
-    expect(restored.viewMode).toBe('overlay')
+    expect(restored.viewMode).toBe('grid')
     expect(restored.activeTool).toBe('path')
     expect(restored.canUndo).toBe(false)
     restored.$dispose()

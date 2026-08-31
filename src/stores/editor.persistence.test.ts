@@ -60,6 +60,7 @@ function documentFixture(): PersistedEditorDocument {
     }],
     shapeDirections: { 'front-piece': 'top-down' },
     rasterOptions: { mode: 'inside', symmetryOptimization: false },
+    viewMode: 'outline',
     selectedShapeId: 'front-piece',
     selectedPlanShapeId: 'front-piece',
   }
@@ -94,6 +95,7 @@ describe('编辑器本地持久化', () => {
     '{broken json',
     JSON.stringify({ ...documentFixture(), version: 2 }),
     JSON.stringify({ ...documentFixture(), shapes: [{ id: 'bad', type: 'circle', radiusCm: -1 }] }),
+    JSON.stringify({ ...documentFixture(), viewMode: 'unknown' }),
   ])('损坏、不支持或非法的存档会被删除并安全回退', (serialized) => {
     const storage = new MemoryStorage()
     storage.values.set(EDITOR_STORAGE_KEY, serialized)
