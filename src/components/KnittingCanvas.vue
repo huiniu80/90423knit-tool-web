@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { KonvaEventObject } from 'konva/lib/Node'
+import type { ShapeConfig as KonvaShapeConfig } from 'konva/lib/Shape'
 import type { Stage } from 'konva/lib/Stage'
 import type {
   Bounds,
@@ -187,30 +188,84 @@ const stageCursor = computed(() => {
   return interaction.value ? 'grabbing' : 'default'
 })
 
-const verticalLines = computed(() =>
-  Array.from({ length: fabricGrid.value.columnCount + 1 }, (_, index) =>
-    index * gauge.value.stitchWidthCm * zoom.value,
-  ),
-)
-const horizontalLines = computed(() =>
-  Array.from({ length: fabricGrid.value.rowCount + 1 }, (_, index) =>
-    fabricHeightPx.value - index * gauge.value.rowHeightCm * zoom.value,
-  ),
-)
-const rasterBands = computed(() =>
-  rasterRows.value.flatMap((row) =>
-    row.segments.map((segment) => ({
-      key: `${row.rowIndex}-${segment.startStitch}-${segment.endStitch}`,
-      x: segment.startStitch * gauge.value.stitchWidthCm * zoom.value,
-      y: fabricHeightPx.value - (row.rowIndex + 1) * gauge.value.rowHeightCm * zoom.value,
-      width:
-        (segment.endStitch - segment.startStitch + 1) *
-        gauge.value.stitchWidthCm *
-        zoom.value,
-      height: gauge.value.rowHeightCm * zoom.value,
-    })),
-  ),
-)
+const rasterShapeConfig = computed<KonvaShapeConfig>(() => {
+  const rows = rasterRows.value
+  const stitchWidthPx = gauge.value.stitchWidthCm * zoom.value
+  const rowHeightPx = gauge.value.rowHeightCm * zoom.value
+  const height = fabricHeightPx.value
+
+  return {
+    width: fabricWidthPx.value,
+    height,
+    fill: '#8eada1',
+    opacity: viewMode.value === 'overlay' ? 0.4 : 0.64,
+    sceneFunc(context, shape) {
+      context.beginPath()
+      for (const row of rows) {
+        const y = height - (row.rowIndex + 1) * rowHeightPx
+        for (const segment of row.segments) {
+          context.rect(
+            segment.startStitch * stitchWidthPx,
+            y,
+            (segment.endStitch - segment.startStitch + 1) * stitchWidthPx,
+            rowHeightPx,
+          )
+        }
+      }
+      context.fillShape(shape)
+    },
+  }
+})
+
+const gridShapeConfig = computed<KonvaShapeConfig>(() => {
+  const columnCount = fabricGrid.value.columnCount
+  const rowCount = fabricGrid.value.rowCount
+  const stitchWidthPx = gauge.value.stitchWidthCm * zoom.value
+  const rowHeightPx = gauge.value.rowHeightCm * zoom.value
+  const width = fabricWidthPx.value
+  const height = fabricHeightPx.value
+
+  return {
+    width,
+    height,
+    listening: false,
+    sceneFunc(context) {
+      const drawLines = (
+        count: number,
+        isMajor: boolean,
+        pointAt: (index: number) => [number, number, number, number],
+      ) => {
+        context.beginPath()
+        for (let index = 0; index <= count; index += 1) {
+          if ((index % 5 === 0) !== isMajor) continue
+          const [startX, startY, endX, endY] = pointAt(index)
+          context.moveTo(startX, startY)
+          context.lineTo(endX, endY)
+        }
+        context.setAttr('strokeStyle', isMajor ? '#a59d90' : '#d8d2c8')
+        context.setAttr('lineWidth', isMajor ? 0.8 : 0.45)
+        context.stroke()
+      }
+
+      drawLines(columnCount, false, (index) => {
+        const x = index * stitchWidthPx
+        return [x, 0, x, height]
+      })
+      drawLines(columnCount, true, (index) => {
+        const x = index * stitchWidthPx
+        return [x, 0, x, height]
+      })
+      drawLines(rowCount, false, (index) => {
+        const y = height - index * rowHeightPx
+        return [0, y, width, y]
+      })
+      drawLines(rowCount, true, (index) => {
+        const y = height - index * rowHeightPx
+        return [0, y, width, y]
+      })
+    },
+  }
+})
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(Math.max(value, minimum), Math.max(minimum, maximum))
@@ -1526,16 +1581,8 @@ defineExpose({ fitCanvas, exportCanvas })
             shadowBlur: 18, shadowOpacity: 0.12, shadowOffsetY: 6,
           }" />
 
-          <template v-if="showRasterFill">
-            <v-rect v-for="band in rasterBands" :key="band.key" :config="{
-              ...band, fill: '#8eada1', opacity: viewMode === 'overlay' ? 0.4 : 0.64,
-            }" />
-          </template>
-
-          <v-line v-for="(x, index) in verticalLines" :key="`v-${index}`"
-            :config="{ points: [x, 0, x, fabricHeightPx], stroke: index % 5 === 0 ? '#a59d90' : '#d8d2c8', strokeWidth: index % 5 === 0 ? 0.8 : 0.45, listening: false }" />
-          <v-line v-for="(y, index) in horizontalLines" :key="`h-${index}`"
-            :config="{ points: [0, y, fabricWidthPx, y], stroke: index % 5 === 0 ? '#a59d90' : '#d8d2c8', strokeWidth: index % 5 === 0 ? 0.8 : 0.45, listening: false }" />
+          <v-shape v-if="showRasterFill" :config="rasterShapeConfig" />
+          <v-shape :config="gridShapeConfig" />
 
           <template v-for="shape in shapes" :key="shape.id">
             <v-rect v-if="shape.type === 'rectangle'" :config="shapeConfig(shape)" />
