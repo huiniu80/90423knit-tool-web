@@ -99,6 +99,39 @@ describe('分段加减针说明', () => {
     expect(lines.every((line) => !line.includes('袖窿'))).toBe(true)
   })
 
+  it('左右镜像模式的领口只归纳左侧规律', () => {
+    const path: PathShape = {
+      id: 'mirrored-neck',
+      type: 'path',
+      closed: true,
+      editConstraint: { type: 'vertical-mirror', axisX: 5 },
+      nodes: [
+        { anchor: { x: 0, y: 0 } },
+        { anchor: { x: 10, y: 0 } },
+        { anchor: { x: 10, y: 6 } },
+        { anchor: { x: 8, y: 8 } },
+        { anchor: { x: 6, y: 8 } },
+        { anchor: { x: 5, y: 6 } },
+        { anchor: { x: 4, y: 8 } },
+        { anchor: { x: 2, y: 8 } },
+        { anchor: { x: 0, y: 6 } },
+      ],
+    }
+    const leftNeckSegment = getShapeBoundarySegments(path)[5]!
+    const description = describeBoundarySegmentShaping(
+      leftNeckSegment,
+      'bottom-up',
+      { stitchWidthCm: 1, rowHeightCm: 1, stitchesPerCm: 1, rowsPerCm: 1 },
+      { widthCm: 10, heightCm: 10 },
+      { mode: 'center', symmetryOptimization: true },
+      5,
+    )
+
+    expect(description.lines.some((line) => line.includes('领口侧镜像减针'))).toBe(true)
+    expect(description.lines.every((line) => !line.includes('圆领塑形'))).toBe(true)
+    expect(description.lines.every((line) => !line.includes('右肩领口侧'))).toBe(true)
+  })
+
   it('开放曲线不再被当成织片', () => {
     const path: PathShape = {
       id: 'open', type: 'path', closed: false,

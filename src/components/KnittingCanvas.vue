@@ -18,12 +18,14 @@ import {
 import { getShapeBounds, resizeShapeToBounds, translateShape } from '../core/geometry/geometry'
 import {
   bendPathSegmentWithSymmetry,
+  canonicalPathMirrorSegmentIndex,
   evaluatePathSegment,
   findNearestOpenPathEndpoint,
   findNearestPathPosition,
   flattenPath,
   movePathControlWithSymmetry,
   movePathNodeWithSymmetry,
+  mirroredPathSegmentIndex,
   pathConstraintSymmetry,
   pathSegmentCount,
   removePathNodeWithSymmetry,
@@ -466,6 +468,13 @@ const annotationModels = computed<AnnotationModel[]>(() => {
     : allSegments
 
   for (const segment of annotatedSegments) {
+    const mirrorSymmetry = segment.sourceShape.type === 'path'
+      ? pathConstraintSymmetry(segment.sourceShape)
+      : null
+    const canonicalSegmentIndex = segment.sourceShape.type === 'path'
+      ? canonicalPathMirrorSegmentIndex(segment.sourceShape, segment.segmentIndex)
+      : segment.segmentIndex
+    if (canonicalSegmentIndex !== segment.segmentIndex) continue
     const shapePlan = planByShapeId.get(segment.shapeId)
     if (!shapePlan) continue
     const description = describeBoundarySegmentShaping(
@@ -483,9 +492,15 @@ const annotationModels = computed<AnnotationModel[]>(() => {
       ? description.lines.map((line) => `${sidePrefix} · ${line}`)
       : description.lines
     const shapeName = segment.sourceShape.name ?? '未命名织片'
+    const mirroredCounterpartIndex = segment.sourceShape.type === 'path' && mirrorSymmetry
+      ? mirroredPathSegmentIndex(segment.sourceShape, segment.segmentIndex, mirrorSymmetry)
+      : null
     const lines = [
       `${shapeName} · 第 ${segment.segmentIndex + 1} 段 · ${directionLabel(shapePlan.direction)}`,
       ...ruleLines,
+      ...(mirroredCounterpartIndex !== null && mirroredCounterpartIndex !== segment.segmentIndex
+        ? ['右侧按相同规律镜像编织']
+        : []),
     ]
     const duplicateProcess = models.some((model) =>
       model.shapeId === segment.shapeId
@@ -1003,7 +1018,12 @@ function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
       ? findNearestBoundarySegment(shape, worldFromScreen(pointer))
       : null
     selectedGridAnnotationSegment.value = segment
-      ? { shapeId, segmentIndex: segment.segmentIndex }
+      ? {
+          shapeId,
+          segmentIndex: segment.sourceShape.type === 'path'
+            ? canonicalPathMirrorSegmentIndex(segment.sourceShape, segment.segmentIndex)
+            : segment.segmentIndex,
+        }
       : null
   }
 

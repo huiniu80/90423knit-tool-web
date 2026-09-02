@@ -202,7 +202,9 @@ export function describeBoundarySegmentShaping(
   if (!edge) return { boundarySide: 'both', lines: ['未识别织片边界'], markers: [] }
   const split = instructions.find((instruction) => instruction.transition === 'split')
   const isNeck = edge === 'left-neck' || edge === 'right-neck'
-  const spansNeck = isNeck
+  const isMirrorConstrained = segment.sourceShape.type === 'path'
+    && segment.sourceShape.editConstraint?.type === 'vertical-mirror'
+  const spansNeck = !isMirrorConstrained && isNeck
     && bounds.x <= outlineCenterX
     && bounds.x + bounds.width >= outlineCenterX
   const edges: GarmentEdgeRole[] = spansNeck ? ['left-neck', 'right-neck'] : [edge]

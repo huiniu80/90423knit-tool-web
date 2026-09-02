@@ -381,7 +381,7 @@ export function movePathControlWithSymmetry(
   return { ...normalized, nodes }
 }
 
-function mirroredSegmentIndex(
+export function mirroredPathSegmentIndex(
   path: PathShape,
   segmentIndex: number,
   symmetry: PathSymmetry,
@@ -398,6 +398,23 @@ function mirroredSegmentIndex(
   return null
 }
 
+/** 镜像标注只展示一侧时，统一以画布左侧的线段作为说明来源。 */
+export function canonicalPathMirrorSegmentIndex(
+  path: PathShape,
+  segmentIndex: number,
+): number {
+  const symmetry = pathConstraintSymmetry(path)
+  if (!symmetry) return segmentIndex
+  const pairedSegmentIndex = mirroredPathSegmentIndex(path, segmentIndex, symmetry)
+  if (pairedSegmentIndex === null || pairedSegmentIndex === segmentIndex) return segmentIndex
+  const midpoint = evaluatePathSegment(path, segmentIndex, 0.5)
+  const pairedMidpoint = evaluatePathSegment(path, pairedSegmentIndex, 0.5)
+  if (midpoint.x !== pairedMidpoint.x) {
+    return midpoint.x < pairedMidpoint.x ? segmentIndex : pairedSegmentIndex
+  }
+  return Math.min(segmentIndex, pairedSegmentIndex)
+}
+
 export function bendPathSegmentWithSymmetry(
   path: PathShape,
   segmentIndex: number,
@@ -406,7 +423,7 @@ export function bendPathSegmentWithSymmetry(
 ): PathShape {
   if (!symmetry) return bendPathSegment(path, segmentIndex, midpoint)
   const normalized = normalizePathWithSymmetry(path, symmetry)
-  const pairedSegmentIndex = mirroredSegmentIndex(normalized, segmentIndex, symmetry)
+  const pairedSegmentIndex = mirroredPathSegmentIndex(normalized, segmentIndex, symmetry)
   if (pairedSegmentIndex === null) return bendPathSegment(normalized, segmentIndex, midpoint)
   if (pairedSegmentIndex === segmentIndex) {
     return bendPathSegment(normalized, segmentIndex, { x: symmetry.axisX, y: midpoint.y })
@@ -672,7 +689,7 @@ export function splitPathSegmentWithSymmetry(
 ): { path: PathShape; insertedIndex: number } {
   if (!symmetry) return splitPathSegment(path, segmentIndex, requestedT)
   const normalized = normalizePathWithSymmetry(path, symmetry)
-  const pairedSegmentIndex = mirroredSegmentIndex(normalized, segmentIndex, symmetry)
+  const pairedSegmentIndex = mirroredPathSegmentIndex(normalized, segmentIndex, symmetry)
   if (pairedSegmentIndex === null) return splitPathSegment(normalized, segmentIndex, requestedT)
   const t = Math.min(0.95, Math.max(0.05, requestedT))
 

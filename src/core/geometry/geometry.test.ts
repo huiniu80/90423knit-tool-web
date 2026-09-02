@@ -3,6 +3,7 @@ import { getHorizontalIntervals, getShapeBounds, resizeShapeToBounds, translateS
 import {
   bendPathSegment,
   bendPathSegmentWithSymmetry,
+  canonicalPathMirrorSegmentIndex,
   detectPathSymmetry,
   enablePathMirror,
   evaluatePathSegment,
@@ -301,6 +302,14 @@ describe('Geometry Engine', () => {
 
     const resized = resizeShapeToBounds(translated, { x: 10, y: 4, width: 20, height: 16 })
     expect(resized.type === 'path' && resized.editConstraint?.axisX).toBe(20)
+  })
+
+  it('镜像路径的左右配对线段统一使用左侧线段展示规律', () => {
+    const constrained = enablePathMirror(symmetricGarmentPath(), 'average')
+
+    expect(canonicalPathMirrorSegmentIndex(constrained, 2)).toBe(7)
+    expect(canonicalPathMirrorSegmentIndex(constrained, 7)).toBe(7)
+    expect(canonicalPathMirrorSegmentIndex(constrained, 0)).toBe(0)
   })
 })
 
