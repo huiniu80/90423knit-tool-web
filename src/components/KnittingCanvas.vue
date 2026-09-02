@@ -46,6 +46,7 @@ import type {
   RoundingDirection,
 } from '../core/dimensions/dimensionConversion'
 import { useEditorStore } from '../stores/editor'
+import { createCanvasExportLayout } from './canvasExportLayout'
 import { layoutMarkersGlobally } from './markerLayout'
 import type { LineObstacle } from './markerLayout'
 
@@ -158,6 +159,7 @@ const selectedPathNodeIndex = ref<number | null>(null)
 const selectedGridAnnotationSegment = ref<{ shapeId: string; segmentIndex: number } | null>(null)
 const highlightedAnnotationKey = ref<string | null>(null)
 const expandedAnnotationKey = ref<string | null>(null)
+const exportingCanvas = ref(false)
 const pinnedAnnotationPositions = ref<Record<string, Point>>({})
 const annotationHovered = ref(false)
 const annotationDragHovered = ref(false)
@@ -330,6 +332,32 @@ function annotationTextHeight(
   const height = Math.ceil(node.height())
   node.destroy()
   return Math.max(annotationLineHeight, height)
+}
+
+function annotationHeaderHeight(
+  model: AnnotationModel,
+  isPinned = false,
+  forExport = exportingCanvas.value,
+): number {
+  const reservedControlWidth = forExport ? 0 : 42 + (isPinned ? 38 : 0)
+  const titleWidth = annotationWidth - annotationPaddingX * 2 - 20 - reservedControlWidth
+  return Math.max(
+    42,
+    annotationTextHeight(model.lines[0] ?? '', titleWidth, 11, 'bold') + annotationHeaderPaddingY * 2,
+  )
+}
+
+function expandedAnnotationHeight(model: AnnotationModel): number {
+  let bodyY = annotationHeaderHeight(model, false, true) + 4
+  model.lines.slice(1).forEach((text) => {
+    bodyY += annotationTextHeight(
+      text,
+      annotationWidth - annotationPaddingX * 2,
+      12,
+      text.includes('加') || text.includes('减') ? 'bold' : 'normal',
+    )
+  })
+  return bodyY + annotationPaddingY
 }
 
 function dimensionButtonTarget(name: string): {
@@ -589,16 +617,14 @@ const shapingAnnotations = computed<ShapingAnnotation[]>(() => {
   const drafts: AnnotationDraft[] = annotationModels.value.map((model) => {
     const anchorX = pan.value.x + model.anchor.x * zoom.value
     const anchorY = pan.value.y + (fabric.value.heightCm - model.anchor.y) * zoom.value
-    const isCompact = compactAnnotationLayout.value && model.key !== activeExpandedKey
+    const isCompact = !exportingCanvas.value
+      && compactAnnotationLayout.value
+      && model.key !== activeExpandedKey
     const bodyTexts = isCompact
       ? [`${Math.max(0, model.lines.length - 1)} 条编织规则 · 点击展开`]
       : model.lines.slice(1)
-    const hasResetButton = Boolean(pinnedAnnotationPositions.value[model.key])
-    const titleWidth = annotationWidth - annotationPaddingX * 2 - 20 - 42 - (hasResetButton ? 38 : 0)
-    const headerHeight = Math.max(
-      42,
-      annotationTextHeight(model.lines[0] ?? '', titleWidth, 11, 'bold') + annotationHeaderPaddingY * 2,
-    )
+    const hasResetButton = !exportingCanvas.value && Boolean(pinnedAnnotationPositions.value[model.key])
+    const headerHeight = annotationHeaderHeight(model, hasResetButton)
     let bodyY = headerHeight + 4
     bodyTexts.forEach((text) => {
       const height = annotationTextHeight(text, annotationWidth - annotationPaddingX * 2, 12,
@@ -666,16 +692,14 @@ const shapingAnnotations = computed<ShapingAnnotation[]>(() => {
     ...annotation,
     ...(() => {
       const model = annotationModels.value.find((item) => item.key === annotation.key)!
-      const isCompact = compactAnnotationLayout.value && annotation.key !== activeExpandedKey
+      const isCompact = !exportingCanvas.value
+        && compactAnnotationLayout.value
+        && annotation.key !== activeExpandedKey
       const bodyTexts = isCompact
         ? [`${Math.max(0, model.lines.length - 1)} 条编织规则 · 点击展开`]
         : model.lines.slice(1)
-      const isPinned = Boolean(pinnedAnnotationPositions.value[annotation.key])
-      const titleWidth = annotationWidth - annotationPaddingX * 2 - 20 - 42 - (isPinned ? 38 : 0)
-      const headerHeight = Math.max(
-        42,
-        annotationTextHeight(model.lines[0] ?? '', titleWidth, 11, 'bold') + annotationHeaderPaddingY * 2,
-      )
+      const isPinned = !exportingCanvas.value && Boolean(pinnedAnnotationPositions.value[annotation.key])
+      const headerHeight = annotationHeaderHeight(model, isPinned)
       let bodyY = headerHeight + 4
       const bodyLines = bodyTexts.map((text) => {
         const height = annotationTextHeight(text, annotationWidth - annotationPaddingX * 2, 12,
@@ -684,7 +708,7 @@ const shapingAnnotations = computed<ShapingAnnotation[]>(() => {
         bodyY += height
         return line
       })
-      const saved = pinnedAnnotationPositions.value[annotation.key]
+      const saved = exportingCanvas.value ? undefined : pinnedAnnotationPositions.value[annotation.key]
       const x = saved
         ? clamp(saved.x, annotationViewportMargin, stageSize.value.width - annotation.width - annotationViewportMargin)
         : annotation.x
@@ -1730,35 +1754,68 @@ function fitCanvas(): void {
   }
 }
 
-function exportCanvas(): void {
+async function exportCanvas(): Promise<void> {
   const stage = stageRef.value?.getNode()
   if (!stage) return
 
-  const pixelRatio = 2
-  const renderedCanvas = stage.toCanvas({ pixelRatio })
-  const exportedCanvas = document.createElement('canvas')
-  exportedCanvas.width = renderedCanvas.width
-  exportedCanvas.height = renderedCanvas.height
-  const context = exportedCanvas.getContext('2d')
-  if (!context) return
+  const previousStageSize = { ...stageSize.value }
+  const previousZoom = zoom.value
+  const previousPan = { ...pan.value }
+  const expandedHeights = annotationModels.value.map((model) => ({
+    side: model.side,
+    height: expandedAnnotationHeight(model),
+  }))
+  const exportLayout = createCanvasExportLayout({
+    fabricWidthCm: fabric.value.widthCm,
+    fabricHeightCm: fabric.value.heightCm,
+    leftAnnotationHeights: expandedHeights
+      .filter((annotation) => annotation.side === 'left')
+      .map((annotation) => annotation.height),
+    rightAnnotationHeights: expandedHeights
+      .filter((annotation) => annotation.side === 'right')
+      .map((annotation) => annotation.height),
+  })
 
-  context.fillStyle = '#e8e3da'
-  context.fillRect(0, 0, exportedCanvas.width, exportedCanvas.height)
-  context.drawImage(renderedCanvas, 0, 0)
+  try {
+    exportingCanvas.value = true
+    stageSize.value = { width: exportLayout.width, height: exportLayout.height }
+    zoom.value = exportLayout.zoom
+    pan.value = exportLayout.pan
+    await nextTick()
+    stage.draw()
 
-  const now = new Date()
-  const timestamp = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, '0'),
-    String(now.getDate()).padStart(2, '0'),
-    '-',
-    String(now.getHours()).padStart(2, '0'),
-    String(now.getMinutes()).padStart(2, '0'),
-  ].join('')
-  const downloadLink = document.createElement('a')
-  downloadLink.download = `编织图解-${timestamp}.png`
-  downloadLink.href = exportedCanvas.toDataURL('image/png')
-  downloadLink.click()
+    const renderedCanvas = stage.toCanvas({ pixelRatio: exportLayout.pixelRatio })
+    const exportedCanvas = document.createElement('canvas')
+    exportedCanvas.width = renderedCanvas.width
+    exportedCanvas.height = renderedCanvas.height
+    const context = exportedCanvas.getContext('2d')
+    if (!context) return
+
+    context.fillStyle = '#e8e3da'
+    context.fillRect(0, 0, exportedCanvas.width, exportedCanvas.height)
+    context.drawImage(renderedCanvas, 0, 0)
+
+    const now = new Date()
+    const timestamp = [
+      now.getFullYear(),
+      String(now.getMonth() + 1).padStart(2, '0'),
+      String(now.getDate()).padStart(2, '0'),
+      '-',
+      String(now.getHours()).padStart(2, '0'),
+      String(now.getMinutes()).padStart(2, '0'),
+    ].join('')
+    const downloadLink = document.createElement('a')
+    downloadLink.download = `编织图解-${timestamp}.png`
+    downloadLink.href = exportedCanvas.toDataURL('image/png')
+    downloadLink.click()
+  } finally {
+    exportingCanvas.value = false
+    stageSize.value = previousStageSize
+    zoom.value = previousZoom
+    pan.value = previousPan
+    await nextTick()
+    stage.draw()
+  }
 }
 
 onMounted(() => {
@@ -2070,7 +2127,8 @@ defineExpose({ fitCanvas, exportCanvas })
             <v-text :config="{
               x: annotationPaddingX + 20,
               y: annotationHeaderPaddingY,
-              width: annotation.width - annotationPaddingX * 2 - 20 - 42 - (annotation.isPinned ? 38 : 0),
+              width: annotation.width - annotationPaddingX * 2 - 20
+                - (exportingCanvas ? 0 : 42 + (annotation.isPinned ? 38 : 0)),
               height: annotation.headerHeight - annotationHeaderPaddingY * 2,
               text: annotation.lines[0], fill: annotationLineColor(annotation.lines[0] ?? '', 0),
               fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
@@ -2088,7 +2146,7 @@ defineExpose({ fitCanvas, exportCanvas })
                 fontStyle: annotationLineIsBold(line.text, lineIndex + 1) ? 'bold' : 'normal',
                 lineHeight: 1.35, verticalAlign: 'top', listening: false,
               }" />
-            <v-group v-if="annotation.isPinned" :config="{ x: annotation.width - 78, y: 4 }">
+            <v-group v-if="annotation.isPinned && !exportingCanvas" :config="{ x: annotation.width - 78, y: 4 }">
               <v-rect :config="{
                 name: `outline-reset:${annotation.shapeId}|${annotation.segmentIndex}`,
                 width: 34, height: 34, fill: '#f0ece4', cornerRadius: 7,
@@ -2099,7 +2157,7 @@ defineExpose({ fitCanvas, exportCanvas })
                 verticalAlign: 'middle', fill: '#52645d', fontSize: 15, listening: false,
               }" />
             </v-group>
-            <v-group :config="{ x: annotation.width - 40, y: 4 }">
+            <v-group v-if="!exportingCanvas" :config="{ x: annotation.width - 40, y: 4 }">
               <v-rect :config="{
                 name: `outline-direction:${annotation.shapeId}|${annotation.segmentIndex}`,
                 width: 34, height: 34, fill: '#e4efeb', cornerRadius: 7,
