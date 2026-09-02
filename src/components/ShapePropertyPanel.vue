@@ -4,6 +4,7 @@ import { storeToRefs } from 'pinia'
 import { getShapeBounds, resizeShapeToBounds } from '../core/geometry/geometry'
 import { detectPathSymmetry, enablePathMirror } from '../core/geometry/path'
 import type { PathMirrorSource } from '../core/geometry/path'
+import { snapCm, tidyPathToGrid } from '../core/geometry/snapping'
 import type { Bounds } from '../core/geometry/shape.types'
 import { useEditorStore } from '../stores/editor'
 
@@ -26,7 +27,8 @@ const typeLabels = {
 
 function updateBound(key: keyof Bounds, event: Event): void {
   if (!selectedShape.value || !bounds.value) return
-  const value = Number((event.target as HTMLInputElement).value)
+  const rawValue = Number((event.target as HTMLInputElement).value)
+  const value = snapCm(rawValue)
   if (!Number.isFinite(value) || ((key === 'width' || key === 'height') && value <= 0)) return
   store.replaceShape(resizeShapeToBounds(selectedShape.value, { ...bounds.value, [key]: value }))
 }
@@ -41,6 +43,11 @@ function togglePathClosed(): void {
   if (selectedShape.value?.type !== 'path') return
   if (!selectedShape.value.closed && selectedShape.value.nodes.length < 3) return
   store.replaceShape({ ...selectedShape.value, closed: !selectedShape.value.closed })
+}
+
+function tidySelectedPath(): void {
+  if (selectedShape.value?.type !== 'path') return
+  store.replaceShape(tidyPathToGrid(selectedShape.value))
 }
 
 function disablePathMirror(): void {
@@ -91,10 +98,10 @@ function confirmPathMirror(source: PathMirrorSource): void {
         <input :value="selectedShape.name" type="text" @change="updateName" />
       </label>
       <div class="field-grid field-grid--two">
-        <label><span>X 位置</span><div class="input-unit"><input :value="bounds.x.toFixed(2)" type="number" step="0.1" @change="updateBound('x', $event)" /><b>cm</b></div></label>
-        <label><span>Y 位置</span><div class="input-unit"><input :value="bounds.y.toFixed(2)" type="number" step="0.1" @change="updateBound('y', $event)" /><b>cm</b></div></label>
-        <label><span>宽度</span><div class="input-unit"><input :value="bounds.width.toFixed(2)" type="number" min="0.1" step="0.1" @change="updateBound('width', $event)" /><b>cm</b></div></label>
-        <label><span>高度</span><div class="input-unit"><input :value="bounds.height.toFixed(2)" type="number" min="0.1" step="0.1" @change="updateBound('height', $event)" /><b>cm</b></div></label>
+        <label><span>X 位置</span><div class="input-unit"><input :value="bounds.x.toFixed(2)" type="number" step="0.5" @change="updateBound('x', $event)" /><b>cm</b></div></label>
+        <label><span>Y 位置</span><div class="input-unit"><input :value="bounds.y.toFixed(2)" type="number" step="0.5" @change="updateBound('y', $event)" /><b>cm</b></div></label>
+        <label><span>宽度</span><div class="input-unit"><input :value="bounds.width.toFixed(2)" type="number" min="0.5" step="0.5" @change="updateBound('width', $event)" /><b>cm</b></div></label>
+        <label><span>高度</span><div class="input-unit"><input :value="bounds.height.toFixed(2)" type="number" min="0.5" step="0.5" @change="updateBound('height', $event)" /><b>cm</b></div></label>
       </div>
       <p v-if="selectedShape.type === 'polygon'" class="property-tip">双击轮廓边添加节点；选中节点后按 Delete 删除。
       </p>
@@ -123,19 +130,23 @@ function confirmPathMirror(source: PathMirrorSource): void {
           <b v-if="hasPathSymmetry" class="symmetry-status">
             中心 X {{ selectedShape.editConstraint?.axisX.toFixed(2) }} cm
           </b>
-          <button type="button" :disabled="!selectedShape.closed && selectedShape.nodes.length < 3"
-            @click="togglePathClosed">
-            {{ selectedShape.closed ? '打开路径' : '闭合路径' }}
-          </button>
+          <div class="path-status-actions">
+            <button type="button" title="锚点对齐到 0.5cm，并拉直接近水平或垂直的直边"
+              @click="tidySelectedPath">整理尺寸</button>
+            <button type="button" :disabled="!selectedShape.closed && selectedShape.nodes.length < 3"
+              @click="togglePathClosed">
+              {{ selectedShape.closed ? '打开路径' : '闭合路径' }}
+            </button>
+          </div>
         </div>
         <p class="property-tip">
           {{ selectedShape.closed
             ? hasPathSymmetry
               ? '左右镜像已锁定。拖动锚点、控制柄或曲线时，另一侧会围绕中心轴同步变化。'
-              : '闭合路径会参与针格和针法计算；自由编辑时两侧互不影响。'
+              : '闭合路径会参与针格和针法计算；尺寸按 0.5cm 吸附，自由编辑时两侧互不影响。'
             : hasPathSymmetry
               ? '开放路径已启用左右镜像，中心节点会保持在中心轴上。'
-              : '开放路径会按曲线经过的针格生成独立指令。拖动橙色中点可调整弧线。' }}
+              : '开放路径按 0.5cm 吸附；接近水平或垂直时自动拉直，按住 Alt 可临时关闭方向吸附。' }}
         </p>
       </div>
     </div>

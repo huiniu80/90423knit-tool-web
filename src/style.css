@@ -213,6 +213,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .mirror-source-choice button { padding: 5px 8px; border: 1px solid #cfaa6f; border-radius: 6px; color: #6c4327; background: #fffdf8; cursor: pointer; font-size: var(--type-label); }
 .mirror-source-choice button.plain { border-color: transparent; background: transparent; }
 .path-status-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #59635e; font-size: var(--type-label); }
+.path-status-actions { display: flex; align-items: center; gap: 6px; }
 .symmetry-status { margin-left: auto; padding: 3px 6px; border-radius: 999px; color: #246b61; background: #e2efea; font-size: var(--type-micro); font-weight: 650; white-space: nowrap; }
 .path-status-row button { padding: 6px 10px; border: 1px solid #b9c9c3; border-radius: 6px; color: #246b61; background: #edf4f1; font-size: var(--type-label); }
 .path-status-row button:hover:not(:disabled) { background: #dfece7; }

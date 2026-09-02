@@ -33,6 +33,8 @@ import {
   splitPathSegmentWithSymmetry,
 } from '../core/geometry/path'
 import type { PathSymmetry } from '../core/geometry/path'
+import { snapCm, snapPoint, snapPointToGrid } from '../core/geometry/snapping'
+import type { SnapAxis } from '../core/geometry/snapping'
 import { describeBoundarySegmentShaping } from '../core/knitting/segmentPlanner'
 import {
   formatCm,
@@ -167,8 +169,9 @@ let activePenPointerId: number | null = null
 let touchGesture: TouchGesture | null = null
 const touchPointers = new Map<number, Point>()
 let interactionFrameId: number | null = null
-let pendingInteractionPointer: Point | null = null
+let pendingInteractionPointer: { pointer: Point; directionSnap: boolean } | null = null
 let suppressNextStageClick = false
+const snapGuide = ref<{ axis: SnapAxis; value: number } | null>(null)
 
 const canvasBoundaryPadding = 24
 const annotationWidth = 264
@@ -971,6 +974,44 @@ function worldFromScreen(screen: Point, clampToFabric = false): Point {
   }
 }
 
+function applyPointSnap(point: Point, references: readonly Point[], directionSnap: boolean): Point {
+  const result = snapPoint(point, references, directionSnap)
+  snapGuide.value = result.axis && result.guideValue !== null
+    ? { axis: result.axis, value: result.guideValue }
+    : null
+  return {
+    x: Math.min(fabric.value.widthCm, Math.max(0, result.point.x)),
+    y: Math.min(fabric.value.heightCm, Math.max(0, result.point.y)),
+  }
+}
+
+function pathAnchorReferences(shape: PathShape, nodeIndex: number): Point[] {
+  const references: Point[] = []
+  const count = shape.nodes.length
+  const current = shape.nodes[nodeIndex]
+  if (!current || count < 2) return references
+  const previousIndex = nodeIndex - 1 >= 0 ? nodeIndex - 1 : shape.closed ? count - 1 : -1
+  if (previousIndex >= 0) {
+    const previous = shape.nodes[previousIndex]!
+    if (!previous.outControl && !current.inControl) references.push(previous.anchor)
+  }
+  const nextIndex = nodeIndex + 1 < count ? nodeIndex + 1 : shape.closed ? 0 : -1
+  if (nextIndex >= 0) {
+    const next = shape.nodes[nextIndex]!
+    if (!current.outControl && !next.inControl) references.push(next.anchor)
+  }
+  return references
+}
+
+function polygonPointReferences(shape: PolygonShape, pointIndex: number): Point[] {
+  const count = shape.points.length
+  if (count < 2) return []
+  return [
+    shape.points[(pointIndex - 1 + count) % count]!,
+    shape.points[(pointIndex + 1) % count]!,
+  ]
+}
+
 function targetName(event: KonvaEventObject<PointerEvent>): string {
   return event.target.name?.() ?? ''
 }
@@ -1244,7 +1285,7 @@ function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
   selectedPathNodeIndex.value = null
 }
 
-function applyInteractionMove(pointer: Point): void {
+function applyInteractionMove(pointer: Point, directionSnap = true): void {
   const current = interaction.value
   if (!current) return
 
@@ -1277,19 +1318,27 @@ function applyInteractionMove(pointer: Point): void {
     return
   }
 
-  const world = worldFromScreen(
+  const rawWorld = worldFromScreen(
     pointer,
     current.kind === 'point' || current.kind === 'path-anchor',
   )
   if (current.kind === 'move') {
+    snapGuide.value = null
+    const bounds = getShapeBounds(current.shape)
+    const rawDeltaX = rawWorld.x - current.start.x
+    const rawDeltaY = rawWorld.y - current.start.y
+    const targetX = snapCm(bounds.x + rawDeltaX)
+    const targetY = snapCm(bounds.y + rawDeltaY)
     store.updateShapeLive(
       translateShape(
         current.shape,
-        world.x - current.start.x,
-        world.y - current.start.y,
+        targetX - bounds.x,
+        targetY - bounds.y,
       ),
     )
   } else if (current.kind === 'resize') {
+    snapGuide.value = null
+    const world = snapPointToGrid(rawWorld)
     const bounds: Bounds = {
       x: Math.min(current.anchor.x, world.x),
       y: Math.min(current.anchor.y, world.y),
@@ -1298,11 +1347,21 @@ function applyInteractionMove(pointer: Point): void {
     }
     store.updateShapeLive(resizeShapeToBounds(current.shape, bounds))
   } else if (current.kind === 'point') {
+    const world = applyPointSnap(
+      rawWorld,
+      polygonPointReferences(current.shape, current.pointIndex),
+      directionSnap,
+    )
     const points = current.shape.points.map((point, index) =>
       index === current.pointIndex ? world : point,
     )
     store.updateShapeLive({ ...current.shape, points })
   } else if (current.kind === 'path-anchor') {
+    const world = applyPointSnap(
+      rawWorld,
+      pathAnchorReferences(current.shape, current.nodeIndex),
+      directionSnap,
+    )
     store.updateShapeLive(movePathNodeWithSymmetry(
       current.shape,
       current.nodeIndex,
@@ -1310,18 +1369,20 @@ function applyInteractionMove(pointer: Point): void {
       current.symmetry,
     ))
   } else if (current.kind === 'path-control') {
+    snapGuide.value = null
     store.updateShapeLive(movePathControlWithSymmetry(
       current.shape,
       current.nodeIndex,
       current.control,
-      world,
+      rawWorld,
       current.symmetry,
     ))
   } else if (current.kind === 'path-midpoint') {
+    snapGuide.value = null
     store.updateShapeLive(bendPathSegmentWithSymmetry(
       current.shape,
       current.segmentIndex,
-      world,
+      rawWorld,
       current.symmetry,
     ))
   }
@@ -1332,19 +1393,19 @@ function flushInteractionMove(): void {
     cancelAnimationFrame(interactionFrameId)
     interactionFrameId = null
   }
-  const pointer = pendingInteractionPointer
+  const pending = pendingInteractionPointer
   pendingInteractionPointer = null
-  if (pointer) applyInteractionMove(pointer)
+  if (pending) applyInteractionMove(pending.pointer, pending.directionSnap)
 }
 
-function scheduleInteractionMove(pointer: Point): void {
-  pendingInteractionPointer = pointer
+function scheduleInteractionMove(pointer: Point, directionSnap = true): void {
+  pendingInteractionPointer = { pointer, directionSnap }
   if (interactionFrameId !== null) return
   interactionFrameId = requestAnimationFrame(() => {
     interactionFrameId = null
-    const latestPointer = pendingInteractionPointer
+    const latest = pendingInteractionPointer
     pendingInteractionPointer = null
-    if (latestPointer) applyInteractionMove(latestPointer)
+    if (latest) applyInteractionMove(latest.pointer, latest.directionSnap)
   })
 }
 
@@ -1353,7 +1414,7 @@ function onPointerMove(event: KonvaEventObject<PointerEvent>): void {
   if (!pointer) return
   if (event.evt.pointerType === 'touch' && interaction.value?.kind === 'annotation-drag') {
     event.evt.preventDefault()
-    scheduleInteractionMove(pointer)
+    scheduleInteractionMove(pointer, !event.evt.altKey)
     return
   }
   if (event.evt.pointerType === 'touch') {
@@ -1377,8 +1438,15 @@ function onPointerMove(event: KonvaEventObject<PointerEvent>): void {
   annotationDragHovered.value = Boolean(annotationDrag)
   annotationHovered.value = Boolean(annotationKey || dimensionButtonTarget(name))
   highlightedAnnotationKey.value = annotationKey
-  pathPointer.value = activeTool.value === 'path' ? worldFromScreen(pointer, true) : null
-  if (interaction.value) scheduleInteractionMove(pointer)
+  if (activeTool.value === 'path') {
+    const rawPathPointer = worldFromScreen(pointer, true)
+    const previous = draftPathNodes.value.at(-1)?.anchor
+    pathPointer.value = applyPointSnap(rawPathPointer, previous ? [previous] : [], !event.evt.altKey)
+  } else {
+    pathPointer.value = null
+    if (!interaction.value) snapGuide.value = null
+  }
+  if (interaction.value) scheduleInteractionMove(pointer, !event.evt.altKey)
 }
 
 function endInteraction(): void {
@@ -1389,6 +1457,7 @@ function endInteraction(): void {
     && interaction.value.kind !== 'annotation-drag'
   ) store.commitShapeMutation()
   interaction.value = null
+  snapGuide.value = null
 }
 
 function onPointerEnd(event: KonvaEventObject<PointerEvent>): void {
@@ -1452,12 +1521,18 @@ function onStagePointerClick(event: KonvaEventObject<PointerEvent>): void {
       rawPoint,
       pathSnapDistanceCm.value,
     )
-    const point = endpointSnap?.point ?? rawPoint
+    const previous = draftPathNodes.value.at(-1)?.anchor
+    const point = endpointSnap?.point ?? applyPointSnap(
+      rawPoint,
+      previous ? [previous] : [],
+      !event.evt.altKey,
+    )
     store.addDraftPathNode({ anchor: point })
     return
   }
 
-  const point = rawPoint
+  const previous = draftPoints.value.at(-1)
+  const point = applyPointSnap(rawPoint, previous ? [previous] : [], !event.evt.altKey)
   const first = draftPoints.value[0]
 
   if (
@@ -1534,7 +1609,11 @@ function onPointerDoubleClick(event: KonvaEventObject<PointerEvent>): void {
   if (!name.startsWith('shape:')) return
   const shape = clonePlain(selectedShape.value)
   const insertion = nearestEdgeInsertion(shape, world)
-  shape.points.splice(insertion, 0, world)
+  const references = [
+    shape.points[(insertion - 1 + shape.points.length) % shape.points.length]!,
+    shape.points[insertion % shape.points.length]!,
+  ]
+  shape.points.splice(insertion, 0, applyPointSnap(world, references, !event.evt.altKey))
   store.replaceShape(shape)
   selectedPointIndex.value = insertion
 }
@@ -1758,6 +1837,13 @@ defineExpose({ fitCanvas, exportCanvas })
 
           <v-shape v-if="showRasterFill" :config="rasterShapeConfig" />
           <v-shape :config="gridShapeConfig" />
+
+          <v-line v-if="snapGuide" :config="{
+            points: snapGuide.axis === 'horizontal'
+              ? [0, (fabric.heightCm - snapGuide.value) * zoom, fabricWidthPx, (fabric.heightCm - snapGuide.value) * zoom]
+              : [snapGuide.value * zoom, 0, snapGuide.value * zoom, fabricHeightPx],
+            stroke: '#287d72', strokeWidth: 1.4, dash: [6, 4], opacity: 0.78, listening: false,
+          }" />
 
           <template v-for="shape in shapes" :key="shape.id">
             <v-rect v-if="shape.type === 'rectangle'" :config="shapeConfig(shape)" />
@@ -2064,7 +2150,7 @@ defineExpose({ fitCanvas, exportCanvas })
     </div>
     <div v-if="activeTool === 'path'" class="polygon-hint path-hint">
       <b>贝塞尔路径</b>
-      <span>点击添加锚点 · 靠近端点自动吸附 · 点击起点闭合 · ESC 取消</span>
+      <span>0.5cm 磁吸 · 接近水平/垂直自动拉直 · Alt 临时自由方向 · 点击起点闭合</span>
       <button type="button" :disabled="draftPathNodes.length < 2"
         @mousedown.stop @click.stop="finishPath(false)">
         完成开放路径 <kbd>Enter</kbd>
