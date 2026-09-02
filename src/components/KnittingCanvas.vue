@@ -46,6 +46,7 @@ import type {
   RoundingDirection,
 } from '../core/dimensions/dimensionConversion'
 import { useEditorStore } from '../stores/editor'
+import { avoidPinnedCardCollisions } from './annotationCardLayout'
 import { createCanvasExportLayout } from './canvasExportLayout'
 import { layoutMarkersGlobally } from './markerLayout'
 import type { LineObstacle } from './markerLayout'
@@ -656,39 +657,7 @@ const shapingAnnotations = computed<ShapingAnnotation[]>(() => {
     ...layoutAnnotationSide(drafts.filter((draft) => draft.side === 'left')),
     ...layoutAnnotationSide(drafts.filter((draft) => draft.side === 'right')),
   ]
-  const positionedMarkers = layoutMarkersGlobally(
-    placed.flatMap((annotation) => annotation.markers.map((marker) => ({
-      id: marker.id,
-      label: marker.label,
-      anchorX: marker.anchorX,
-      anchorY: marker.anchorY,
-      radius: markerRadius(marker.label),
-      side: annotation.side,
-    }))),
-    {
-      bounds: {
-        left: annotationViewportMargin,
-        top: annotationViewportMargin,
-        right: stageSize.value.width - annotationViewportMargin,
-        bottom: stageSize.value.height - annotationViewportMargin,
-      },
-      circleObstacles: placed.map((annotation) => ({
-        x: annotation.anchorX,
-        y: annotation.anchorY,
-        radius: 12,
-      })),
-      rectangleObstacles: placed.map((annotation) => ({
-        x: annotation.x,
-        y: annotation.y,
-        width: annotation.width,
-        height: annotation.height,
-      })),
-      lineObstacles: outlineLineObstacles.value,
-    },
-  )
-  const markerPositionById = new Map(positionedMarkers.map((marker) => [marker.id, marker]))
-
-  return placed.map((annotation) => ({
+  const positionedAnnotations = avoidPinnedCardCollisions(placed.map((annotation) => ({
     ...annotation,
     ...(() => {
       const model = annotationModels.value.find((item) => item.key === annotation.key)!
@@ -717,6 +686,45 @@ const shapingAnnotations = computed<ShapingAnnotation[]>(() => {
         : annotation.y
       return { x, y, headerHeight, bodyLines, isPinned, isCompact }
     })(),
+  })), {
+    top: annotationViewportMargin,
+    bottom: stageSize.value.height - annotationViewportMargin,
+    gap: annotationCollisionGap,
+  })
+  const positionedMarkers = layoutMarkersGlobally(
+    positionedAnnotations.flatMap((annotation) => annotation.markers.map((marker) => ({
+      id: marker.id,
+      label: marker.label,
+      anchorX: marker.anchorX,
+      anchorY: marker.anchorY,
+      radius: markerRadius(marker.label),
+      side: annotation.side,
+    }))),
+    {
+      bounds: {
+        left: annotationViewportMargin,
+        top: annotationViewportMargin,
+        right: stageSize.value.width - annotationViewportMargin,
+        bottom: stageSize.value.height - annotationViewportMargin,
+      },
+      circleObstacles: placed.map((annotation) => ({
+        x: annotation.anchorX,
+        y: annotation.anchorY,
+        radius: 12,
+      })),
+      rectangleObstacles: positionedAnnotations.map((annotation) => ({
+        x: annotation.x,
+        y: annotation.y,
+        width: annotation.width,
+        height: annotation.height,
+      })),
+      lineObstacles: outlineLineObstacles.value,
+    },
+  )
+  const markerPositionById = new Map(positionedMarkers.map((marker) => [marker.id, marker]))
+
+  return positionedAnnotations.map((annotation) => ({
+    ...annotation,
     markers: annotation.markers.map((marker) => {
       const position = markerPositionById.get(marker.id)
       return position ? { ...marker, x: position.x, y: position.y } : marker
