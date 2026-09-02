@@ -4,6 +4,7 @@ import { storeToRefs } from 'pinia'
 import type { KonvaEventObject } from 'konva/lib/Node'
 import type { ShapeConfig as KonvaShapeConfig } from 'konva/lib/Shape'
 import type { Stage } from 'konva/lib/Stage'
+import { Text as KonvaText } from 'konva/lib/shapes/Text'
 import type {
   Bounds,
   PathShape,
@@ -49,6 +50,7 @@ import type { LineObstacle } from './markerLayout'
 type Corner = 'nw' | 'ne' | 'se' | 'sw'
 type Interaction =
   | { kind: 'pan'; start: Point; origin: Point }
+  | { kind: 'annotation-drag'; key: string; start: Point; origin: Point }
   | { kind: 'move'; start: Point; shape: Shape }
   | { kind: 'resize'; corner: Corner; anchor: Point; shape: Shape }
   | { kind: 'point'; pointIndex: number; shape: PolygonShape }
@@ -96,6 +98,10 @@ interface AnnotationModel {
 
 interface ShapingAnnotation extends Omit<AnnotationDraft, 'preferredY'> {
   y: number
+  headerHeight: number
+  bodyLines: Array<{ text: string; y: number; height: number }>
+  isPinned: boolean
+  isCompact: boolean
   connectorPoints: number[]
 }
 
@@ -149,7 +155,10 @@ const selectedPointIndex = ref<number | null>(null)
 const selectedPathNodeIndex = ref<number | null>(null)
 const selectedGridAnnotationSegment = ref<{ shapeId: string; segmentIndex: number } | null>(null)
 const highlightedAnnotationKey = ref<string | null>(null)
+const expandedAnnotationKey = ref<string | null>(null)
+const pinnedAnnotationPositions = ref<Record<string, Point>>({})
 const annotationHovered = ref(false)
+const annotationDragHovered = ref(false)
 const canvasBackgroundHovered = ref(false)
 let resizeObserver: ResizeObserver | null = null
 let initializationFrameId: number | null = null
@@ -169,6 +178,11 @@ const annotationPaddingY = 10
 const annotationViewportMargin = 14
 const annotationCollisionGap = 10
 const annotationFabricGap = 42
+const annotationHeaderPaddingY = 7
+
+const compactAnnotationLayout = computed(() => (
+  stageSize.value.width < 1120 || stageSize.value.height < 680
+))
 
 function clonePlain<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -179,6 +193,8 @@ const fabricHeightPx = computed(() => fabric.value.heightCm * zoom.value)
 const showRasterFill = computed(() => viewMode.value !== 'outline')
 const showOutlineFill = computed(() => viewMode.value === 'outline' || viewMode.value === 'overlay')
 const stageCursor = computed(() => {
+  if (interaction.value?.kind === 'annotation-drag') return 'grabbing'
+  if (annotationDragHovered.value) return 'grab'
   if (annotationHovered.value) return 'pointer'
   if (interaction.value?.kind === 'pan') return 'grabbing'
   if (interaction.value?.kind === 'move') return 'grabbing'
@@ -279,6 +295,38 @@ function annotationCardTarget(name: string): { shapeId: string; segmentIndex: nu
   const [shapeId, segmentIndexText] = name.slice(prefix.length).split('|')
   const segmentIndex = Number(segmentIndexText)
   return shapeId && Number.isInteger(segmentIndex) ? { shapeId, segmentIndex } : null
+}
+
+function annotationControlTarget(
+  name: string,
+  prefix: 'outline-drag:' | 'outline-direction:' | 'outline-reset:',
+): { shapeId: string; segmentIndex: number; key: string } | null {
+  if (!name.startsWith(prefix)) return null
+  const [shapeId, segmentIndexText] = name.slice(prefix.length).split('|')
+  const segmentIndex = Number(segmentIndexText)
+  return shapeId && Number.isInteger(segmentIndex)
+    ? { shapeId, segmentIndex, key: `${shapeId}:${segmentIndex}` }
+    : null
+}
+
+function annotationTextHeight(
+  text: string,
+  width: number,
+  fontSize: number,
+  fontStyle = 'normal',
+): number {
+  const node = new KonvaText({
+    text,
+    width: Math.max(1, width),
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize,
+    fontStyle,
+    lineHeight: 1.35,
+    wrap: 'char',
+  })
+  const height = Math.ceil(node.height())
+  node.destroy()
+  return Math.max(annotationLineHeight, height)
 }
 
 function dimensionButtonTarget(name: string): {
@@ -507,7 +555,6 @@ const annotationModels = computed<AnnotationModel[]>(() => {
       && JSON.stringify(model.lines.slice(1)) === JSON.stringify(lines.slice(1)),
     )
     if (duplicateProcess) continue
-    const height = annotationPaddingY * 2 + lines.length * annotationLineHeight
     const isCentered = Math.abs(segment.anchor.x - outlineCenterX) < 0.001
     const side = segment.anchor.x < outlineCenterX || (isCentered && segment.segmentIndex % 2 === 0)
       ? 'left'
@@ -520,7 +567,7 @@ const annotationModels = computed<AnnotationModel[]>(() => {
       side,
       anchor: segment.anchor,
       width: annotationWidth,
-      height,
+      height: annotationPaddingY * 2 + lines.length * annotationLineHeight,
       lines,
       markers: description.markers,
     })
@@ -534,17 +581,37 @@ const outlineLineObstacles = computed(() =>
 )
 
 const shapingAnnotations = computed<ShapingAnnotation[]>(() => {
+  const defaultExpandedKey = annotationModels.value[0]?.key ?? null
+  const activeExpandedKey = expandedAnnotationKey.value ?? defaultExpandedKey
   const drafts: AnnotationDraft[] = annotationModels.value.map((model) => {
     const anchorX = pan.value.x + model.anchor.x * zoom.value
     const anchorY = pan.value.y + (fabric.value.heightCm - model.anchor.y) * zoom.value
+    const isCompact = compactAnnotationLayout.value && model.key !== activeExpandedKey
+    const bodyTexts = isCompact
+      ? [`${Math.max(0, model.lines.length - 1)} 条编织规则 · 点击展开`]
+      : model.lines.slice(1)
+    const hasResetButton = Boolean(pinnedAnnotationPositions.value[model.key])
+    const titleWidth = annotationWidth - annotationPaddingX * 2 - 20 - 42 - (hasResetButton ? 38 : 0)
+    const headerHeight = Math.max(
+      42,
+      annotationTextHeight(model.lines[0] ?? '', titleWidth, 11, 'bold') + annotationHeaderPaddingY * 2,
+    )
+    let bodyY = headerHeight + 4
+    bodyTexts.forEach((text) => {
+      const height = annotationTextHeight(text, annotationWidth - annotationPaddingX * 2, 12,
+        text.includes('加') || text.includes('减') ? 'bold' : 'normal')
+      bodyY += height
+    })
+    const height = bodyY + annotationPaddingY
     return {
       ...model,
+      height,
       anchorX,
       anchorY,
       x: model.side === 'left'
         ? annotationViewportMargin
         : stageSize.value.width - annotationViewportMargin - annotationWidth,
-      preferredY: anchorY - model.height / 2,
+      preferredY: anchorY - height / 2,
       markers: model.markers.map((marker, markerIndex) => ({
         id: `${model.key}-marker-${markerIndex}`,
         label: marker.label,
@@ -594,10 +661,41 @@ const shapingAnnotations = computed<ShapingAnnotation[]>(() => {
 
   return placed.map((annotation) => ({
     ...annotation,
+    ...(() => {
+      const model = annotationModels.value.find((item) => item.key === annotation.key)!
+      const isCompact = compactAnnotationLayout.value && annotation.key !== activeExpandedKey
+      const bodyTexts = isCompact
+        ? [`${Math.max(0, model.lines.length - 1)} 条编织规则 · 点击展开`]
+        : model.lines.slice(1)
+      const isPinned = Boolean(pinnedAnnotationPositions.value[annotation.key])
+      const titleWidth = annotationWidth - annotationPaddingX * 2 - 20 - 42 - (isPinned ? 38 : 0)
+      const headerHeight = Math.max(
+        42,
+        annotationTextHeight(model.lines[0] ?? '', titleWidth, 11, 'bold') + annotationHeaderPaddingY * 2,
+      )
+      let bodyY = headerHeight + 4
+      const bodyLines = bodyTexts.map((text) => {
+        const height = annotationTextHeight(text, annotationWidth - annotationPaddingX * 2, 12,
+          text.includes('加') || text.includes('减') ? 'bold' : 'normal')
+        const line = { text, y: bodyY, height }
+        bodyY += height
+        return line
+      })
+      const saved = pinnedAnnotationPositions.value[annotation.key]
+      const x = saved
+        ? clamp(saved.x, annotationViewportMargin, stageSize.value.width - annotation.width - annotationViewportMargin)
+        : annotation.x
+      const y = saved
+        ? clamp(saved.y, annotationViewportMargin, stageSize.value.height - annotation.height - annotationViewportMargin)
+        : annotation.y
+      return { x, y, headerHeight, bodyLines, isPinned, isCompact }
+    })(),
     markers: annotation.markers.map((marker) => {
       const position = markerPositionById.get(marker.id)
       return position ? { ...marker, x: position.x, y: position.y } : marker
     }),
+  })).map((annotation) => ({
+    ...annotation,
     connectorPoints: connectorPoints(annotation),
   }))
 })
@@ -966,6 +1064,43 @@ function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
   const pointer = pointerFromEvent(event)
   if (!pointer) return
   const name = targetName(event)
+  const annotationDirection = annotationControlTarget(name, 'outline-direction:')
+  if (annotationDirection) {
+    event.evt.preventDefault()
+    suppressNextStageClick = true
+    toggleAnnotationDirection(annotationDirection.shapeId)
+    return
+  }
+  const annotationReset = annotationControlTarget(name, 'outline-reset:')
+  if (annotationReset) {
+    event.evt.preventDefault()
+    suppressNextStageClick = true
+    const next = { ...pinnedAnnotationPositions.value }
+    delete next[annotationReset.key]
+    pinnedAnnotationPositions.value = next
+    return
+  }
+  const annotationDrag = annotationControlTarget(name, 'outline-drag:')
+  if (annotationDrag) {
+    const annotation = shapingAnnotations.value.find((item) => item.key === annotationDrag.key)
+    if (!annotation) return
+    event.evt.preventDefault()
+    suppressNextStageClick = true
+    expandedAnnotationKey.value = annotation.key
+    interaction.value = {
+      kind: 'annotation-drag',
+      key: annotation.key,
+      start: pointer,
+      origin: { x: annotation.x, y: annotation.y },
+    }
+    return
+  }
+  const annotationTarget = annotationCardTarget(name)
+  if (annotationTarget) {
+    event.evt.preventDefault()
+    expandedAnnotationKey.value = `${annotationTarget.shapeId}:${annotationTarget.segmentIndex}`
+    return
+  }
   const dimensionTarget = dimensionButtonTarget(name)
   if (dimensionTarget) {
     event.evt.preventDefault()
@@ -1002,11 +1137,6 @@ function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
       selectedPathNodeIndex.value = null
     }
     interaction.value = { kind: 'pan', start: pointer, origin: { ...pan.value } }
-    return
-  }
-  const annotationTarget = annotationCardTarget(name)
-  if (annotationTarget) {
-    toggleAnnotationDirection(annotationTarget.shapeId)
     return
   }
   if (activeTool.value === 'polygon' || activeTool.value === 'path') return
@@ -1126,6 +1256,27 @@ function applyInteractionMove(pointer: Point): void {
     return
   }
 
+  if (current.kind === 'annotation-drag') {
+    const annotation = shapingAnnotations.value.find((item) => item.key === current.key)
+    if (!annotation) return
+    pinnedAnnotationPositions.value = {
+      ...pinnedAnnotationPositions.value,
+      [current.key]: {
+        x: clamp(
+          current.origin.x + pointer.x - current.start.x,
+          annotationViewportMargin,
+          stageSize.value.width - annotation.width - annotationViewportMargin,
+        ),
+        y: clamp(
+          current.origin.y + pointer.y - current.start.y,
+          annotationViewportMargin,
+          stageSize.value.height - annotation.height - annotationViewportMargin,
+        ),
+      },
+    }
+    return
+  }
+
   const world = worldFromScreen(
     pointer,
     current.kind === 'point' || current.kind === 'path-anchor',
@@ -1200,6 +1351,11 @@ function scheduleInteractionMove(pointer: Point): void {
 function onPointerMove(event: KonvaEventObject<PointerEvent>): void {
   const pointer = pointerFromEvent(event)
   if (!pointer) return
+  if (event.evt.pointerType === 'touch' && interaction.value?.kind === 'annotation-drag') {
+    event.evt.preventDefault()
+    scheduleInteractionMove(pointer)
+    return
+  }
   if (event.evt.pointerType === 'touch') {
     if (!touchPointers.has(event.evt.pointerId)) return
     event.evt.preventDefault()
@@ -1211,18 +1367,27 @@ function onPointerMove(event: KonvaEventObject<PointerEvent>): void {
   }
   const name = targetName(event)
   const annotationTarget = annotationCardTarget(name)
-  canvasBackgroundHovered.value = isCanvasBackground(name)
-  annotationHovered.value = Boolean(annotationTarget || dimensionButtonTarget(name))
-  highlightedAnnotationKey.value = annotationTarget
+  const annotationDrag = annotationControlTarget(name, 'outline-drag:')
+  const annotationDirection = annotationControlTarget(name, 'outline-direction:')
+  const annotationReset = annotationControlTarget(name, 'outline-reset:')
+  const annotationKey = annotationTarget
     ? `${annotationTarget.shapeId}:${annotationTarget.segmentIndex}`
-    : null
+    : annotationDrag?.key ?? annotationDirection?.key ?? annotationReset?.key ?? null
+  canvasBackgroundHovered.value = isCanvasBackground(name)
+  annotationDragHovered.value = Boolean(annotationDrag)
+  annotationHovered.value = Boolean(annotationKey || dimensionButtonTarget(name))
+  highlightedAnnotationKey.value = annotationKey
   pathPointer.value = activeTool.value === 'path' ? worldFromScreen(pointer, true) : null
   if (interaction.value) scheduleInteractionMove(pointer)
 }
 
 function endInteraction(): void {
   flushInteractionMove()
-  if (interaction.value && interaction.value.kind !== 'pan') store.commitShapeMutation()
+  if (
+    interaction.value
+    && interaction.value.kind !== 'pan'
+    && interaction.value.kind !== 'annotation-drag'
+  ) store.commitShapeMutation()
   interaction.value = null
 }
 
@@ -1254,6 +1419,7 @@ function onPointerEnd(event: KonvaEventObject<PointerEvent>): void {
 function onPointerLeave(event: KonvaEventObject<PointerEvent>): void {
   pathPointer.value = null
   annotationHovered.value = false
+  annotationDragHovered.value = false
   canvasBackgroundHovered.value = false
   highlightedAnnotationKey.value = null
   onPointerEnd(event)
@@ -1783,13 +1949,22 @@ defineExpose({ fitCanvas, exportCanvas })
               shadowOpacity: 0.12, shadowOffsetY: 2, listening: activeTool !== 'path',
             }" />
             <v-rect :config="{
+              name: `outline-drag:${annotation.shapeId}|${annotation.segmentIndex}`,
+              x: 1, y: 1, width: annotation.width - 2, height: annotation.headerHeight,
+              fill: 'rgba(255,255,255,0.001)', cornerRadius: [7, 7, 0, 0],
+            }" />
+            <v-line :config="{
+              points: [8, annotation.headerHeight, annotation.width - 8, annotation.headerHeight],
+              stroke: '#e5ddd1', strokeWidth: 1, listening: false,
+            }" />
+            <v-rect :config="{
               x: 0, y: 9, width: 4, height: annotation.height - 18,
               fill: annotationIsHighlighted(annotation.key) ? '#b24631' : '#287d72',
               cornerRadius: [0, 2, 2, 0], listening: false,
             }" />
             <v-circle :config="{
               x: annotationPaddingX + 7,
-              y: annotationPaddingY + annotationLineHeight / 2,
+              y: annotation.headerHeight / 2,
               radius: 8,
               fill: annotationIsHighlighted(annotation.key) ? '#b24631' : '#263d36',
               stroke: '#fffdf8', strokeWidth: 1.4,
@@ -1797,7 +1972,7 @@ defineExpose({ fitCanvas, exportCanvas })
             }" />
             <v-text :config="{
               x: annotationPaddingX,
-              y: annotationPaddingY + 1,
+              y: annotation.headerHeight / 2 - 8,
               width: 14,
               height: annotationLineHeight - 2,
               text: `${annotation.segmentIndex + 1}`,
@@ -1806,19 +1981,50 @@ defineExpose({ fitCanvas, exportCanvas })
               fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
               fontSize: 9, fontStyle: 'bold', listening: false,
             }" />
-            <v-text v-for="(line, lineIndex) in annotation.lines"
-              :key="`${annotation.key}-line-${lineIndex}`" :config="{
-                x: annotationPaddingX + (lineIndex === 0 ? 20 : 0),
-                y: annotationPaddingY + lineIndex * annotationLineHeight,
-                width: annotation.width - annotationPaddingX * 2 - (lineIndex === 0 ? 20 : 0),
-                height: annotationLineHeight,
-                text: line,
-                fill: annotationLineColor(line, lineIndex),
+            <v-text :config="{
+              x: annotationPaddingX + 20,
+              y: annotationHeaderPaddingY,
+              width: annotation.width - annotationPaddingX * 2 - 20 - 42 - (annotation.isPinned ? 38 : 0),
+              height: annotation.headerHeight - annotationHeaderPaddingY * 2,
+              text: annotation.lines[0], fill: annotationLineColor(annotation.lines[0] ?? '', 0),
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+              fontSize: 11, fontStyle: 'bold', lineHeight: 1.35,
+              verticalAlign: 'middle', listening: false,
+            }" />
+            <v-text v-for="(line, lineIndex) in annotation.bodyLines"
+              :key="`${annotation.key}-body-line-${lineIndex}`" :config="{
+                x: annotationPaddingX, y: line.y,
+                width: annotation.width - annotationPaddingX * 2,
+                height: line.height, text: line.text,
+                fill: annotation.isCompact ? '#6f756f' : annotationLineColor(line.text, lineIndex + 1),
                 fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                fontSize: lineIndex === 0 ? 11 : 12,
-                fontStyle: annotationLineIsBold(line, lineIndex) ? 'bold' : 'normal',
-                verticalAlign: 'middle', listening: false,
+                fontSize: 12,
+                fontStyle: annotationLineIsBold(line.text, lineIndex + 1) ? 'bold' : 'normal',
+                lineHeight: 1.35, verticalAlign: 'top', listening: false,
               }" />
+            <v-group v-if="annotation.isPinned" :config="{ x: annotation.width - 78, y: 4 }">
+              <v-rect :config="{
+                name: `outline-reset:${annotation.shapeId}|${annotation.segmentIndex}`,
+                width: 34, height: 34, fill: '#f0ece4', cornerRadius: 7,
+                stroke: '#d4cabd', strokeWidth: 1,
+              }" />
+              <v-text :config="{
+                x: 0, y: 7, width: 34, height: 20, text: '↺', align: 'center',
+                verticalAlign: 'middle', fill: '#52645d', fontSize: 15, listening: false,
+              }" />
+            </v-group>
+            <v-group :config="{ x: annotation.width - 40, y: 4 }">
+              <v-rect :config="{
+                name: `outline-direction:${annotation.shapeId}|${annotation.segmentIndex}`,
+                width: 34, height: 34, fill: '#e4efeb', cornerRadius: 7,
+                stroke: '#9bb8ae', strokeWidth: 1,
+              }" />
+              <v-text :config="{
+                x: 0, y: 7, width: 34, height: 20, text: '↕', align: 'center',
+                verticalAlign: 'middle', fill: '#246b61', fontSize: 14,
+                fontStyle: 'bold', listening: false,
+              }" />
+            </v-group>
           </v-group>
 
           <template v-for="annotation in shapingAnnotations" :key="`${annotation.key}-markers`">
