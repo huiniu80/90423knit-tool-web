@@ -134,7 +134,7 @@ function edgeStitchCount(row: RasterRow | undefined, edge: GarmentEdgeRole): num
 
 export function describeBoundarySegmentShaping(
   segment: ShapeBoundarySegment,
-  direction: KnitDirection,
+  _direction: KnitDirection,
   gauge: Gauge,
   canvas: FabricCanvas,
   rasterOptions: RasterOptions,
@@ -149,27 +149,27 @@ export function describeBoundarySegmentShaping(
   }
 
   const rows = rasterize(segment.sourceShape, gauge, canvas, rasterOptions)
-  const instructions = generateInstructions(rows, direction)
+  const instructions = generateInstructions(rows, 'bottom-up')
   const activeRows = rows.filter((row) => row.stitchCount > 0)
   if (!activeRows.length) return { boundarySide: 'both', lines: ['未落入针格'], markers: [] }
 
   const bounds = getShapeBounds(segment.rasterShape)
-  const firstRow = direction === 'bottom-up' ? activeRows[0] : activeRows.at(-1)
-  const lastRow = direction === 'bottom-up' ? activeRows.at(-1) : activeRows[0]
+  const firstRow = activeRows[0]
+  const lastRow = activeRows.at(-1)
   const isHorizontal = bounds.height <= gauge.rowHeightCm * 0.55
   if (isHorizontal && firstRow && Math.abs(segment.anchor.y - firstRow.yCm) <= gauge.rowHeightCm) {
-    const castOnLabel = direction === 'bottom-up' ? '下摆起针' : '肩部起针'
+    const castOnLabel = '下摆起针'
     return {
       boundarySide: 'both',
       lines: [
         `${castOnLabel} · 共起 ${firstRow.stitchCount} 针`,
-        `第 1 行开始 · ${direction === 'bottom-up' ? '自下而上编织' : '自上而下编织'}`,
+        '第 1 行开始 · 自下而上编织',
       ],
       markers: [],
     }
   }
   if (isHorizontal && lastRow && Math.abs(segment.anchor.y - lastRow.yCm) <= gauge.rowHeightCm) {
-    if (direction === 'bottom-up' && lastRow.segments.length === 2) {
+    if (lastRow.segments.length === 2) {
       const side = segment.anchor.x <= outlineCenterX ? '左肩' : '右肩'
       const segmentIndex = side === '左肩' ? 0 : 1
       const shoulderStitches = lastRow.segments[segmentIndex]

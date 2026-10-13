@@ -207,14 +207,12 @@ export function migrateEditorDocument(value: unknown): PersistedEditorDocument |
     migrated = { ...migrated, version: EDITOR_DOCUMENT_VERSION, shapes }
   }
   if (!isPersistedEditorDocument(migrated)) return null
-  if (migrated.rasterOptions.mode !== 'center') {
-    return {
+  return {
       ...migrated,
+      shapeDirections: Object.fromEntries(Object.keys(migrated.shapeDirections).map((id) => [id, 'bottom-up'])),
       rasterOptions: { ...migrated.rasterOptions, mode: 'center' },
-      rasterRuleNoticePending: true,
-    }
+      ...(migrated.rasterOptions.mode !== 'center' ? { rasterRuleNoticePending: true } : {}),
   }
-  return migrated
 }
 
 function isPersistedProject(value: unknown): value is PersistedProject {

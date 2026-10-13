@@ -221,7 +221,7 @@ export function rasterize(
     const height = target.rows === null ? bounds.height : target.rows * gauge.rowHeightCm
     const adjustedBounds = {
       x: bounds.x + (bounds.width - width) / 2,
-      y: target.direction === 'bottom-up' ? bounds.y : bounds.y + bounds.height - height,
+      y: bounds.y,
       width,
       height,
     }

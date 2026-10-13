@@ -280,8 +280,8 @@ export const useEditorStore = defineStore('editor', () => {
         gauge.value,
         fabric.value,
       ))
-  function directionForShape(shapeId: string): KnitDirection {
-    return shapeDirections.value[shapeId] ?? 'bottom-up'
+  function directionForShape(_shapeId: string): KnitDirection {
+    return 'bottom-up'
   }
 
   const direction = computed<KnitDirection>({
@@ -546,14 +546,8 @@ export const useEditorStore = defineStore('editor', () => {
     shapesRevision.value += 1
   }
 
-  function setShapeDirection(shapeId: string, nextDirection: KnitDirection): void {
-    if (!shapes.value.some((shape) => shape.id === shapeId)) return
-    if (directionForShape(shapeId) === nextDirection) return
-    pushUndo(captureHistorySnapshot())
-    shapeDirections.value = {
-      ...shapeDirections.value,
-      [shapeId]: nextDirection,
-    }
+  function setShapeDirection(_shapeId: string, _nextDirection: KnitDirection): void {
+    // Retained only for legacy callers; direction is no longer an editable rule.
   }
 
   function setShapeRoundingDirection(

@@ -33,6 +33,16 @@ function projectFixture(): PersistedProject {
 }
 
 describe('编织方案文件', () => {
+  it('旧方向安全迁移为自下而上，轮廓与取整覆盖保持不变', () => {
+    const project = projectFixture()
+    const legacy = createProjectFile(project)
+    legacy.project.document.shapeDirections['front-piece'] = 'top-down'
+    const parsed = parseProjectFile(JSON.stringify(legacy))
+    if (!parsed.ok) throw new Error('legacy fixture rejected')
+    expect(parsed.file.project.document.shapeDirections['front-piece']).toBe('bottom-up')
+    expect(parsed.file.project.document.shapes).toEqual(project.document.shapes)
+    expect(parsed.file.project.document.shapeRoundingPolicies).toEqual(project.document.shapeRoundingPolicies)
+  })
   it.each(['inside', 'outside'] as const)('导入旧 %s 策略后重算中心，重新导出不携带待展示提示', (mode) => {
     const project = projectFixture()
     const file = createProjectFile(project)

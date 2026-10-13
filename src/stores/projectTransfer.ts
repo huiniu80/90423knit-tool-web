@@ -40,6 +40,7 @@ export function createProjectFile(
 ): ExportedProjectFileV1 {
   const document = clonePlain(project.document)
   document.rasterOptions.mode = 'center'
+  document.shapeDirections = Object.fromEntries(Object.keys(document.shapeDirections).map((id) => [id, 'bottom-up']))
   delete document.rasterRuleNoticePending
   return {
     format: PROJECT_FILE_FORMAT,

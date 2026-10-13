@@ -25,10 +25,10 @@ function activeSpan(rows: RasterRow[]): RasterRow[] {
 
 export function generateInstructions(
   rasterRows: RasterRow[],
-  direction: KnitDirection,
+  _direction: KnitDirection,
 ): KnittingInstruction[] {
   const physicalRows = activeSpan(rasterRows)
-  const ordered = direction === 'bottom-up' ? physicalRows : [...physicalRows].reverse()
+  const ordered = physicalRows
 
   return ordered.map((row, index) => {
     const previous = index > 0 ? ordered[index - 1] : undefined

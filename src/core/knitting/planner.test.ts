@@ -39,12 +39,12 @@ describe('Knitting Planner', () => {
     expect(result[1]?.rightChange).toBe(1)
   })
 
-  it('top-down 反转物理行顺序', () => {
+  it('旧 top-down 参数不能反转当前物理行顺序', () => {
     const rows = [row(3, 10, 14), row(4, 11, 13)]
     const result = generateInstructions(rows, 'top-down')
-    expect(result.map((item) => item.sourceRowIndex)).toEqual([4, 3])
-    expect(result[1]?.leftChange).toBe(1)
-    expect(result[1]?.rightChange).toBe(1)
+    expect(result.map((item) => item.sourceRowIndex)).toEqual([3, 4])
+    expect(result[1]?.leftChange).toBe(-1)
+    expect(result[1]?.rightChange).toBe(-1)
   })
 
   it('忽略织片前后的空画布行', () => {
@@ -175,7 +175,7 @@ describe('Knitting Planner', () => {
     )
 
     expect(bottomUp.map((step) => step.startSourceRowIndex)).toEqual([1, 2])
-    expect(topDown.map((step) => step.startSourceRowIndex)).toEqual([1, 0])
+    expect(topDown).toEqual(bottomUp)
     expect(bottomUp.map((step) => step.order)).toEqual([1, 2])
     expect(stepNumberLabel(bottomUp[0]!.order)).toBe('1')
     expect(shapingSequenceStepToText(bottomUp[0]!)).toBe('第 1–2 行：每 2 行加 1 针，共 1 次')
@@ -206,12 +206,12 @@ describe('Knitting Planner', () => {
     expect(edgeShapingPlanToLabelLines(basePlan, false)).toEqual(['未落入针格'])
   })
 
-  it('画布标注跟随 Top-Down 方向重新归纳', () => {
+  it('旧 Top-Down 参数仍按自下而上归纳', () => {
     const rows = [row(0, 2, 6), row(1, 3, 6), row(2, 4, 6)]
     const bottomUp = generateEdgeShapingPlan(generateInstructions(rows, 'bottom-up'), 'left')
     const topDown = generateEdgeShapingPlan(generateInstructions(rows, 'top-down'), 'left')
 
     expect(edgeShapingPlanToLabelLines(bottomUp, true)).toEqual(['减 2-1-1', '减 1-1-1'])
-    expect(edgeShapingPlanToLabelLines(topDown, true)).toEqual(['加 2-1-1', '加 1-1-1'])
+    expect(topDown).toEqual(bottomUp)
   })
 })

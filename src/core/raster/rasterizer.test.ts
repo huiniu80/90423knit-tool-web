@@ -59,7 +59,7 @@ describe('Rasterizer', () => {
     expect(first?.stitchCount).toBe(5)
   })
 
-  it('确认取整后以同一目标控制针格宽高并按编织方向固定起始边', () => {
+  it('确认取整后控制针格宽高，旧方向参数也固定底边', () => {
     const preciseGauge = calculateGauge({
       sampleStitches: 20, sampleRows: 28, sampleWidthCm: 10, sampleHeightCm: 10,
     })
@@ -75,8 +75,8 @@ describe('Rasterizer', () => {
     expect(floorRows.every((row) => row.stitchCount === 36)).toBe(true)
     expect(ceilRows).toHaveLength(54)
     expect(ceilRows.every((row) => row.stitchCount === 37)).toBe(true)
-    expect(ceilRows[0]?.rowIndex).toBe((floorRows[0]?.rowIndex ?? 0) - 1)
-    expect(ceilRows.at(-1)?.rowIndex).toBe(floorRows.at(-1)?.rowIndex)
+    expect(ceilRows[0]?.rowIndex).toBe(floorRows[0]?.rowIndex)
+    expect(ceilRows.at(-1)?.rowIndex).toBe((floorRows.at(-1)?.rowIndex ?? 0) + 1)
   })
 
   it('复用单图形结果合并时与完整栅格化完全一致', () => {

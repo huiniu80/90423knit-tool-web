@@ -88,7 +88,7 @@ describe('Editor Store', () => {
     expect(restored.fabric.widthCm).toBe(42)
     expect(restored.rasterOptions.mode).toBe('center')
     expect(restored.viewMode).toBe('outline')
-    expect(restored.direction).toBe('top-down')
+    expect(restored.direction).toBe('bottom-up')
     expect(restored.shapeRoundingPolicies[circleId]).toEqual({ stitches: 'ceil', rows: null })
     expect(restored.selectedShapeId).toBe(circleId)
     expect(restored.fabricGrid).toEqual(expectedGrid)
@@ -374,22 +374,22 @@ describe('Editor Store', () => {
     expect(store.canRedo).toBe(false)
   })
 
-  it('每个轮廓对象使用独立方向，新对象默认自下而上', () => {
+  it('所有轮廓固定自下而上，旧方向调用不能改变计划', () => {
     const store = useEditorStore()
     store.addDefaultShape('circle')
     const firstShapeId = store.selectedShapeId!
     expect(store.direction).toBe('bottom-up')
     store.direction = 'top-down'
-    expect(store.shapePlans.find((plan) => plan.shapeId === firstShapeId)?.direction).toBe('top-down')
+    expect(store.shapePlans.find((plan) => plan.shapeId === firstShapeId)?.direction).toBe('bottom-up')
 
     store.addDefaultShape('rectangle')
     const rectangleId = store.selectedShapeId!
     expect(store.direction).toBe('bottom-up')
     expect(store.shapePlans.find((plan) => plan.shapeId === rectangleId)?.direction).toBe('bottom-up')
-    expect(store.shapePlans.find((plan) => plan.shapeId === firstShapeId)?.direction).toBe('top-down')
+    expect(store.shapePlans.find((plan) => plan.shapeId === firstShapeId)?.direction).toBe('bottom-up')
 
     store.setShapeDirection(rectangleId, 'top-down')
-    expect(store.direction).toBe('top-down')
+    expect(store.direction).toBe('bottom-up')
   })
 
   it('路径创建和控制点修改可撤销与重做', () => {
@@ -496,7 +496,7 @@ describe('Editor Store', () => {
     expect(store.draftPathNodes).toHaveLength(0)
   })
 
-  it('编织参数、画布尺寸和方向按步骤撤销，旧离散策略不增加步骤', () => {
+  it('编织参数和画布尺寸按步骤撤销，固定策略和方向不增加步骤', () => {
     const store = useEditorStore()
     store.addDefaultShape('rectangle')
     const shapeId = store.selectedShapeId!
@@ -505,8 +505,7 @@ describe('Editor Store', () => {
     store.setRasterOptions({ mode: 'inside' })
     store.setShapeDirection(shapeId, 'top-down')
 
-    expect(store.direction).toBe('top-down')
-    store.undo()
+    expect(store.direction).toBe('bottom-up')
     expect(store.direction).toBe('bottom-up')
     store.undo()
     expect(store.rasterOptions.mode).toBe('center')
@@ -521,7 +520,7 @@ describe('Editor Store', () => {
     expect(store.gaugeInput.sampleStitches).toBe(12)
     expect(store.fabric.widthCm).toBe(42)
     expect(store.rasterOptions.mode).toBe('center')
-    expect(store.direction).toBe('top-down')
+    expect(store.direction).toBe('bottom-up')
   })
 
   it('织片取整策略同步尺寸、针格和指令并支持撤销及删除清理', () => {

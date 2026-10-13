@@ -58,7 +58,7 @@ function documentFixture(): PersistedEditorDocument {
       widthCm: 30,
       heightCm: 50,
     }],
-    shapeDirections: { 'front-piece': 'top-down' },
+    shapeDirections: { 'front-piece': 'bottom-up' },
     shapeRoundingPolicies: { 'front-piece': { stitches: 'ceil', rows: null } },
     rasterOptions: { mode: 'center', symmetryOptimization: false },
     viewMode: 'outline',

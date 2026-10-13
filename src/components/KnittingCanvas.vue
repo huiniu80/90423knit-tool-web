@@ -305,7 +305,7 @@ function annotationCardTarget(name: string): { shapeId: string; segmentIndex: nu
 
 function annotationControlTarget(
   name: string,
-  prefix: 'outline-drag:' | 'outline-direction:' | 'outline-reset:',
+  prefix: 'outline-drag:' | 'outline-reset:',
 ): { shapeId: string; segmentIndex: number; key: string } | null {
   if (!name.startsWith(prefix)) return null
   const [shapeId, segmentIndexText] = name.slice(prefix.length).split('|')
@@ -516,18 +516,6 @@ function connectorPoints(annotation: AnnotationDraft & { y: number }): number[] 
   ]
 }
 
-function directionLabel(direction: (typeof shapePlans.value)[number]['direction']): string {
-  return direction === 'bottom-up' ? '↑ 下→上' : '↓ 上→下'
-}
-
-function toggleAnnotationDirection(shapeId: string): void {
-  const plan = shapePlans.value.find((item) => item.shapeId === shapeId)
-  if (!plan) return
-  store.setShapeDirection(
-    shapeId,
-    plan.direction === 'bottom-up' ? 'top-down' : 'bottom-up',
-  )
-}
 
 const annotationModels = computed<AnnotationModel[]>(() => {
   if (viewMode.value !== 'outline' && viewMode.value !== 'grid') return []
@@ -576,7 +564,7 @@ const annotationModels = computed<AnnotationModel[]>(() => {
       ? mirroredPathSegmentIndex(segment.sourceShape, segment.segmentIndex, mirrorSymmetry)
       : null
     const lines = [
-      `${shapeName} · 第 ${segment.segmentIndex + 1} 段 · ${directionLabel(shapePlan.direction)}`,
+      `${shapeName} · 第 ${segment.segmentIndex + 1} 段 · ↑ 下→上`,
       ...ruleLines,
       ...(mirroredCounterpartIndex !== null && mirroredCounterpartIndex !== segment.segmentIndex
         ? ['右侧按相同规律镜像编织']
@@ -1137,13 +1125,6 @@ function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
   const pointer = pointerFromEvent(event)
   if (!pointer) return
   const name = targetName(event)
-  const annotationDirection = annotationControlTarget(name, 'outline-direction:')
-  if (annotationDirection) {
-    event.evt.preventDefault()
-    suppressNextStageClick = true
-    toggleAnnotationDirection(annotationDirection.shapeId)
-    return
-  }
   const annotationReset = annotationControlTarget(name, 'outline-reset:')
   if (annotationReset) {
     event.evt.preventDefault()
@@ -1461,11 +1442,10 @@ function onPointerMove(event: KonvaEventObject<PointerEvent>): void {
   const name = targetName(event)
   const annotationTarget = annotationCardTarget(name)
   const annotationDrag = annotationControlTarget(name, 'outline-drag:')
-  const annotationDirection = annotationControlTarget(name, 'outline-direction:')
   const annotationReset = annotationControlTarget(name, 'outline-reset:')
   const annotationKey = annotationTarget
     ? `${annotationTarget.shapeId}:${annotationTarget.segmentIndex}`
-    : annotationDrag?.key ?? annotationDirection?.key ?? annotationReset?.key ?? null
+    : annotationDrag?.key ?? annotationReset?.key ?? null
   canvasBackgroundHovered.value = isCanvasBackground(name)
   annotationDragHovered.value = Boolean(annotationDrag)
   annotationHovered.value = Boolean(annotationKey || dimensionButtonTarget(name))
@@ -2163,18 +2143,6 @@ defineExpose({ fitCanvas, exportCanvas })
               <v-text :config="{
                 x: 0, y: 7, width: 34, height: 20, text: '↺', align: 'center',
                 verticalAlign: 'middle', fill: '#52645d', fontSize: 15, listening: false,
-              }" />
-            </v-group>
-            <v-group v-if="!exportingCanvas" :config="{ x: annotation.width - 40, y: 4 }">
-              <v-rect :config="{
-                name: `outline-direction:${annotation.shapeId}|${annotation.segmentIndex}`,
-                width: 34, height: 34, fill: '#e4efeb', cornerRadius: 7,
-                stroke: '#9bb8ae', strokeWidth: 1,
-              }" />
-              <v-text :config="{
-                x: 0, y: 7, width: 34, height: 20, text: '↕', align: 'center',
-                verticalAlign: 'middle', fill: '#246b61', fontSize: 14,
-                fontStyle: 'bold', listening: false,
               }" />
             </v-group>
           </v-group>
