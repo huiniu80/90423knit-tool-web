@@ -10,17 +10,12 @@ export const GRID_LIMITS = {
   rowsMax: 3_000,
   cellsWarning: 500_000,
   cellsMax: 2_000_000,
-  stitchesPerCmWarningMin: 0.5,
-  stitchesPerCmWarningMax: 10,
-  rowsPerCmWarningMin: 0.5,
-  rowsPerCmWarningMax: 15,
 } as const
 
 export type GridAssessmentStatus = 'valid' | 'warning' | 'blocked'
 export type GridAssessmentIssueCode =
   | 'non_integer_count'
   | 'field_out_of_range'
-  | 'density_unusual'
   | 'columns_exceeded'
   | 'rows_exceeded'
   | 'cells_exceeded'
@@ -121,18 +116,6 @@ export function assessGrid(gaugeInput: GaugeInput, fabric: FabricCanvas): GridAs
       })
     }
 
-    if (stitchesPerCm < GRID_LIMITS.stitchesPerCmWarningMin || stitchesPerCm > GRID_LIMITS.stitchesPerCmWarningMax) {
-      issues.push({
-        code: 'density_unusual', severity: 'warning',
-        message: `横向密度为 ${stitchesPerCm.toFixed(2)} 针/cm，明显偏离常见范围，请确认小样数据。`,
-      })
-    }
-    if (rowsPerCm < GRID_LIMITS.rowsPerCmWarningMin || rowsPerCm > GRID_LIMITS.rowsPerCmWarningMax) {
-      issues.push({
-        code: 'density_unusual', severity: 'warning',
-        message: `纵向密度为 ${rowsPerCm.toFixed(2)} 行/cm，明显偏离常见范围，请确认小样数据。`,
-      })
-    }
     if (cellCount > GRID_LIMITS.cellsWarning && cellCount <= GRID_LIMITS.cellsMax) {
       issues.push({
         code: 'cells_warning', severity: 'warning',

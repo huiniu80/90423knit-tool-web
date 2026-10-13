@@ -514,6 +514,9 @@ export const useEditorStore = defineStore('editor', () => {
     if (gaugeInput.value[key] === value) return { ok: true, assessment }
     pushUndo(captureHistorySnapshot())
     gaugeInput.value = nextGaugeInput
+    showNotice(assessment.status === 'blocked'
+      ? '密度已更新，网格超限，请继续调整参数'
+      : '密度已更新，针格和编织方案已重新计算')
     return { ok: true, assessment }
   }
 

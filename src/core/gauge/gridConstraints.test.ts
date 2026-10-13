@@ -36,12 +36,12 @@ describe('编织网格规模评估', () => {
     expect(result.issues.every((issue) => issue.severity === 'warning')).toBe(true)
   })
 
-  it('不常见密度只警告而不阻止', () => {
+  it('有效密度不根据常见范围警告', () => {
     const result = assessGrid(
       { sampleStitches: 11, sampleRows: 10, sampleWidthCm: 1, sampleHeightCm: 10 },
       { widthCm: 10, heightCm: 10 },
     )
-    expect(result.status).toBe('warning')
-    expect(result.issues).toContainEqual(expect.objectContaining({ code: 'density_unusual', severity: 'warning' }))
+    expect(result.status).toBe('valid')
+    expect(result.issues).toEqual([])
   })
 })

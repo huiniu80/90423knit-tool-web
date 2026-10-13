@@ -29,6 +29,23 @@ function stubBrowser(storage: MemoryStorage): void {
 }
 
 describe('Editor Store', () => {
+  it('有效密度提交重算并提示一次，无效提交不新增历史或提示', () => {
+    vi.useFakeTimers()
+    const store = useEditorStore()
+    store.addDefaultShape('rectangle')
+    const original = JSON.stringify(store.shapes)
+    store.setGaugeInputValue('sampleStitches', 20)
+    expect(store.notice).toBe('密度已更新，针格和编织方案已重新计算')
+    expect(store.fabricGrid.columnCount).toBe(120)
+    expect(JSON.stringify(store.shapes)).toBe(original)
+    vi.advanceTimersByTime(6500)
+    expect(store.notice).toBe('')
+    expect(store.setGaugeInputValue('sampleStitches', -1).ok).toBe(false)
+    expect(store.notice).toBe('')
+    store.undo()
+    expect(store.gaugeInput.sampleStitches).toBe(10)
+    store.$dispose()
+  })
   it('旧方案迁移提示在打开时消费，刷新及重复自动保存不会再次提示', async () => {
     vi.useFakeTimers()
     const storage = new MemoryStorage()
@@ -189,13 +206,13 @@ describe('Editor Store', () => {
     expect(store.canUndo).toBe(false)
   })
 
-  it('异常但安全的编织密度会警告并允许保存', () => {
+  it('安全密度不触发常见范围警告并允许保存', () => {
     const store = useEditorStore()
 
     const result = store.setGaugeInputValue('sampleStitches', 110)
 
     expect(result.ok).toBe(true)
-    expect(result.assessment.status).toBe('warning')
+    expect(result.assessment.status).toBe('valid')
     expect(store.gaugeInput.sampleStitches).toBe(110)
   })
 
