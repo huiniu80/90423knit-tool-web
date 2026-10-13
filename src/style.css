@@ -480,3 +480,5 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .editor-main, .left-panel { transition: none; }
 }
+
+.editor-notice { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); max-width: calc(100vw - 32px); padding: 12px 18px; margin: 0; z-index: 60; color: #fff; background: #263b34; border-radius: 10px; font-size: 14px; pointer-events: none; }

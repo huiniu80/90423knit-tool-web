@@ -4,10 +4,9 @@ import { storeToRefs } from 'pinia'
 import { useEditorStore } from '../stores/editor'
 import { GRID_LIMITS } from '../core/gauge/gridConstraints'
 import type { GaugeInput, FabricCanvas } from '../core/gauge/gauge.types'
-import type { RasterOptions } from '../core/raster/raster.types'
 
 const store = useEditorStore()
-const { gaugeInput, fabric, gauge, fabricGrid, gridAssessment, rasterOptions } = storeToRefs(store)
+const { gaugeInput, fabric, gauge, fabricGrid, gridAssessment } = storeToRefs(store)
 const rejectedMessage = ref('')
 
 const assessmentMessage = computed(() => rejectedMessage.value
@@ -41,9 +40,6 @@ function setPositive(
   }
 }
 
-function setRasterMode(event: Event): void {
-  store.setRasterOptions({ mode: (event.target as HTMLSelectElement).value as RasterOptions['mode'] })
-}
 </script>
 
 <template>
@@ -132,14 +128,4 @@ function setRasterMode(event: Event): void {
       :role="assessmentTone === 'error' ? 'alert' : 'status'">{{ assessmentMessage }}</p>
   </section>
 
-  <section class="panel-section compact-options">
-    <label class="select-label">
-      <span>离散策略</span>
-      <select :value="rasterOptions.mode" @change="setRasterMode">
-        <option value="center">针格中心</option>
-        <option value="inside">完全在轮廓内</option>
-        <option value="outside">轮廓有覆盖</option>
-      </select>
-    </label>
-  </section>
 </template>

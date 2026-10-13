@@ -60,7 +60,7 @@ function documentFixture(): PersistedEditorDocument {
     }],
     shapeDirections: { 'front-piece': 'top-down' },
     shapeRoundingPolicies: { 'front-piece': { stitches: 'ceil', rows: null } },
-    rasterOptions: { mode: 'inside', symmetryOptimization: false },
+    rasterOptions: { mode: 'center', symmetryOptimization: false },
     viewMode: 'outline',
     selectedShapeId: 'front-piece',
     selectedPlanShapeId: 'front-piece',
@@ -84,6 +84,16 @@ function libraryFixture(): PersistedProjectLibrary {
 afterEach(() => vi.useRealTimers())
 
 describe('编辑器本地持久化', () => {
+  it.each(['inside', 'outside'] as const)('旧 %s 策略迁移不修改轮廓，并保留待展示提示', (mode) => {
+    const storage = new MemoryStorage()
+    const original = { ...documentFixture(), rasterOptions: { mode, symmetryOptimization: false } }
+    storage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(original))
+    const migrated = loadEditorDocument(storage)!
+    expect(migrated.shapes).toEqual(original.shapes)
+    expect(migrated.rasterOptions.mode).toBe('center')
+    expect(migrated.rasterRuleNoticePending).toBe(true)
+    expect(original.rasterOptions.mode).toBe(mode)
+  })
   it('将 v1 文档迁移为当前文档版本', () => {
     const storage = new MemoryStorage()
     const legacy = { ...documentFixture(), version: 1 }

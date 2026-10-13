@@ -23,6 +23,8 @@ export interface PersistedEditorDocument {
   shapeDirections: Record<string, KnitDirection>
   shapeRoundingPolicies: Record<string, ShapeRoundingPolicy>
   rasterOptions: RasterOptions
+  /** Compatibility notice, consumed only when this project is opened. */
+  rasterRuleNoticePending?: boolean
   /** Optional for compatibility with projects saved before display-mode persistence. */
   viewMode?: ViewMode
   selectedShapeId: string | null
@@ -168,6 +170,7 @@ export function isPersistedEditorDocument(value: unknown): value is PersistedEdi
     || !isShapeDirections(value.shapeDirections)
     || !isShapeRoundingPolicies(value.shapeRoundingPolicies)
     || !isRasterOptions(value.rasterOptions)
+    || (value.rasterRuleNoticePending !== undefined && typeof value.rasterRuleNoticePending !== 'boolean')
     || (value.viewMode !== undefined
       && value.viewMode !== 'outline'
       && value.viewMode !== 'grid'
@@ -203,7 +206,15 @@ export function migrateEditorDocument(value: unknown): PersistedEditorDocument |
     })
     migrated = { ...migrated, version: EDITOR_DOCUMENT_VERSION, shapes }
   }
-  return isPersistedEditorDocument(migrated) ? migrated : null
+  if (!isPersistedEditorDocument(migrated)) return null
+  if (migrated.rasterOptions.mode !== 'center') {
+    return {
+      ...migrated,
+      rasterOptions: { ...migrated.rasterOptions, mode: 'center' },
+      rasterRuleNoticePending: true,
+    }
+  }
+  return migrated
 }
 
 function isPersistedProject(value: unknown): value is PersistedProject {

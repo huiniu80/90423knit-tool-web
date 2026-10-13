@@ -4,7 +4,6 @@ import { getHorizontalIntervals, getShapeBounds, resizeShapeToBounds } from '../
 import { flattenPath } from '../geometry/path'
 import type { HorizontalInterval, PathShape, Point, Shape } from '../geometry/shape.types'
 import type {
-  RasterMode,
   RasterOptions,
   RasterRow,
   ShapeRasterTarget,
@@ -16,24 +15,10 @@ const EPSILON = 1e-9
 function intervalToSegment(
   interval: HorizontalInterval,
   stitchWidthCm: number,
-  mode: RasterMode,
 ): StitchSegment {
-  switch (mode) {
-    case 'inside':
-      return {
-        startStitch: Math.ceil(interval.startX / stitchWidthCm - EPSILON),
-        endStitch: Math.floor(interval.endX / stitchWidthCm + EPSILON) - 1,
-      }
-    case 'outside':
-      return {
-        startStitch: Math.floor(interval.startX / stitchWidthCm),
-        endStitch: Math.ceil(interval.endX / stitchWidthCm - EPSILON) - 1,
-      }
-    case 'center':
-      return {
-        startStitch: Math.ceil(interval.startX / stitchWidthCm - 0.5 - EPSILON),
-        endStitch: Math.floor(interval.endX / stitchWidthCm - 0.5 + EPSILON),
-      }
+  return {
+    startStitch: Math.ceil(interval.startX / stitchWidthCm - 0.5 - EPSILON),
+    endStitch: Math.floor(interval.endX / stitchWidthCm - 0.5 + EPSILON),
   }
 }
 
@@ -181,14 +166,13 @@ function rasterizeFilledShape(
   shape: Shape,
   gauge: Gauge,
   canvas: FabricCanvas,
-  options: RasterOptions,
 ): RasterRow[] {
   const { columnCount, rowCount } = calculateFabricGrid(canvas, gauge)
   const segmentsByRow = Array.from({ length: rowCount }, (_, rowIndex) => {
     const yCm = (rowIndex + 0.5) * gauge.rowHeightCm
     return mergeAndClipSegments(
       getHorizontalIntervals(shape, yCm).map((interval) =>
-        intervalToSegment(interval, gauge.stitchWidthCm, options.mode),
+        intervalToSegment(interval, gauge.stitchWidthCm),
       ),
       columnCount,
     )
@@ -228,7 +212,7 @@ export function rasterize(
   shape: Shape,
   gauge: Gauge,
   canvas: FabricCanvas,
-  options: RasterOptions,
+  _options: RasterOptions,
   target?: ShapeRasterTarget,
 ): RasterRow[] {
   if (target && (target.stitches !== null || target.rows !== null)) {
@@ -246,5 +230,5 @@ export function rasterize(
   if (shape.type === 'path' && !shape.closed) {
     return rasterizeOpenPath(shape, gauge, canvas)
   }
-  return rasterizeFilledShape(shape, gauge, canvas, options)
+  return rasterizeFilledShape(shape, gauge, canvas)
 }

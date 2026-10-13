@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
 import { useEditorStore } from './editor'
 import { EDITOR_STORAGE_KEY, PROJECT_LIBRARY_STORAGE_KEY } from './editor.persistence'
+import { parseProjectFile } from './projectTransfer'
 
 class MemoryStorage {
   readonly values = new Map<string, string>()
@@ -28,6 +29,30 @@ function stubBrowser(storage: MemoryStorage): void {
 }
 
 describe('Editor Store', () => {
+  it('旧方案迁移提示在打开时消费，刷新及重复自动保存不会再次提示', async () => {
+    vi.useFakeTimers()
+    const storage = new MemoryStorage()
+    stubBrowser(storage)
+    const store = useEditorStore()
+    store.addDefaultShape('rectangle')
+    const file = store.createProjectExport()!
+    file.project.document.rasterOptions.mode = 'outside'
+    const parsed = parseProjectFile(JSON.stringify(file))
+    if (!parsed.ok) throw new Error('legacy fixture rejected')
+    expect(store.importProject(parsed.file).status).toBe('imported')
+    expect(store.notice).toBe('针格规则已更新，结果可能变化')
+    expect(store.rasterOptions.mode).toBe('center')
+    expect(store.shapes).toEqual(file.project.document.shapes)
+    await nextTick()
+    vi.advanceTimersByTime(6500)
+    expect(store.notice).toBe('')
+    store.$dispose()
+    setActivePinia(createPinia())
+    const restored = useEditorStore()
+    expect(restored.notice).toBe('')
+    expect(restored.rasterOptions.mode).toBe('center')
+    restored.$dispose()
+  })
   beforeEach(() => setActivePinia(createPinia()))
   afterEach(() => {
     vi.useRealTimers()
@@ -61,7 +86,7 @@ describe('Editor Store', () => {
     expect(restored.shapes.map((shape) => shape.id)).toEqual([starterId, circleId])
     expect(restored.gaugeInput.sampleStitches).toBe(18)
     expect(restored.fabric.widthCm).toBe(42)
-    expect(restored.rasterOptions.mode).toBe('inside')
+    expect(restored.rasterOptions.mode).toBe('center')
     expect(restored.viewMode).toBe('outline')
     expect(restored.direction).toBe('top-down')
     expect(restored.shapeRoundingPolicies[circleId]).toEqual({ stitches: 'ceil', rows: null })
@@ -471,7 +496,7 @@ describe('Editor Store', () => {
     expect(store.draftPathNodes).toHaveLength(0)
   })
 
-  it('编织参数、画布尺寸、离散策略和编织方向均按步骤撤销', () => {
+  it('编织参数、画布尺寸和方向按步骤撤销，旧离散策略不增加步骤', () => {
     const store = useEditorStore()
     store.addDefaultShape('rectangle')
     const shapeId = store.selectedShapeId!
@@ -485,7 +510,6 @@ describe('Editor Store', () => {
     expect(store.direction).toBe('bottom-up')
     store.undo()
     expect(store.rasterOptions.mode).toBe('center')
-    store.undo()
     expect(store.fabric.widthCm).toBe(60)
     store.undo()
     expect(store.gaugeInput.sampleStitches).toBe(10)
@@ -496,7 +520,7 @@ describe('Editor Store', () => {
     store.redo()
     expect(store.gaugeInput.sampleStitches).toBe(12)
     expect(store.fabric.widthCm).toBe(42)
-    expect(store.rasterOptions.mode).toBe('inside')
+    expect(store.rasterOptions.mode).toBe('center')
     expect(store.direction).toBe('top-down')
   })
 

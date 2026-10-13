@@ -13,6 +13,14 @@ const gauge = calculateGauge({
 const canvas: FabricCanvas = { widthCm: 30, heightCm: 30 }
 
 describe('Rasterizer', () => {
+  it('旧策略参数不能改变当前中心针格结果', () => {
+    const shape: Shape = { id: 'r', type: 'rectangle', x: 0.2, y: 0, widthCm: 2.1, heightCm: 3 }
+    const center = rasterize(shape, gauge, canvas, { mode: 'center', symmetryOptimization: false })
+    expect(center[0]?.segments).toEqual([{ startStitch: 0, endStitch: 1 }])
+    for (const mode of ['inside', 'outside'] as const) {
+      expect(rasterize(shape, gauge, canvas, { mode, symmetryOptimization: false })).toEqual(center)
+    }
+  })
   it('每行使用行中心作为扫描位置', () => {
     const shape: Shape = { id: 'r', type: 'rectangle', x: 0, y: 0, widthCm: 3, heightCm: 3 }
     const rows = rasterize(shape, gauge, canvas, { mode: 'center', symmetryOptimization: true })

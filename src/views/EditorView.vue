@@ -10,7 +10,7 @@ import { useEditorStore } from '../stores/editor'
 import { loadSidebarExpanded, saveSidebarExpanded } from './editorLayoutPreferences'
 
 const store = useEditorStore()
-const { activeProject, gridAssessment, hasUnfinishedDraft, projects, storageStatus } = storeToRefs(store)
+const { activeProject, gridAssessment, hasUnfinishedDraft, projects, storageStatus, notice } = storeToRefs(store)
 const canvasRef = ref<InstanceType<typeof KnittingCanvas> | null>(null)
 const sidebarExpanded = ref(loadSidebarExpanded())
 const projectLibraryOpen = ref(false)
@@ -60,6 +60,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app-shell">
+    <p v-if="notice" class="editor-notice" role="status">{{ notice }}</p>
     <header class="app-header">
       <div class="brand-lockup">
         <span class="brand-mark" aria-hidden="true">

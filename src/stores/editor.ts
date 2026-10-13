@@ -34,6 +34,7 @@ import {
   loadProjectLibrary,
   removeLegacyEditorDocument,
   saveProjectLibrary,
+  migrateEditorDocument,
 } from './editor.persistence'
 import type {
   PageLifecycleTarget,
@@ -181,6 +182,20 @@ export const useEditorStore = defineStore('editor', () => {
   const draftTool = ref<'polygon' | 'path' | null>(null)
   const drawingSessionId = ref<string | null>(null)
   const storageStatus = ref<'saved' | 'error'>(storage ? 'saved' : 'error')
+  const notice = ref('')
+  let noticeTimer: ReturnType<typeof setTimeout> | null = null
+  function showNotice(message: string): void {
+    if (noticeTimer !== null) clearTimeout(noticeTimer)
+    notice.value = message
+    noticeTimer = setTimeout(() => { notice.value = ''; noticeTimer = null }, 6000)
+  }
+  function consumeRasterRuleNotice(document: PersistedEditorDocument): void {
+    if (!document.rasterRuleNoticePending) return
+    delete document.rasterRuleNoticePending
+    showNotice('针格规则已更新，结果可能变化')
+  }
+  consumeRasterRuleNotice(persistedDocument)
+  onScopeDispose(() => { if (noticeTimer !== null) clearTimeout(noticeTimer) })
 
   const undoStack = ref<HistoryEntry[]>([])
   const redoStack = ref<HistoryEntry[]>([])
@@ -397,6 +412,7 @@ export const useEditorStore = defineStore('editor', () => {
     storageStatus.value = migrated ? 'saved' : 'error'
     if (migrated && legacyDocument) removeLegacyEditorDocument(storage)
   }
+  if (notice.value) autoSave.schedule()
 
   function captureHistorySnapshot(): HistorySnapshot {
     return {
@@ -515,7 +531,7 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   function setRasterOptions(nextOptions: Partial<RasterOptions>): void {
-    const next = { ...rasterOptions.value, ...nextOptions }
+    const next = { ...rasterOptions.value, ...nextOptions, mode: 'center' as const }
     if (JSON.stringify(next) === JSON.stringify(rasterOptions.value)) return
     pushUndo(captureHistorySnapshot())
     rasterOptions.value = next
@@ -735,6 +751,8 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   function applyProjectDocument(document: PersistedEditorDocument): void {
+    consumeRasterRuleNotice(document)
+    autoSave.schedule()
     const nextShapes = cloneShapes(document.shapes)
     const validSelection = (shapeId: string | null): string | null => (
       shapeId && nextShapes.some((shape) => shape.id === shapeId)
@@ -804,7 +822,7 @@ export const useEditorStore = defineStore('editor', () => {
     excludedProjectId?: string,
   ): PersistedProject {
     const now = new Date().toISOString()
-    const document = clonePlain(file.project.document)
+    const document = clonePlain(migrateEditorDocument(file.project.document) ?? file.project.document)
     document.savedAt = now
     return {
       id: createId(),
@@ -961,6 +979,7 @@ export const useEditorStore = defineStore('editor', () => {
     activeProjectId,
     activeProject,
     storageStatus,
+    notice,
     maxProjects: MAX_PROJECTS,
     gaugeInput,
     fabric,

@@ -33,6 +33,20 @@ function projectFixture(): PersistedProject {
 }
 
 describe('编织方案文件', () => {
+  it.each(['inside', 'outside'] as const)('导入旧 %s 策略后重算中心，重新导出不携带待展示提示', (mode) => {
+    const project = projectFixture()
+    const file = createProjectFile(project)
+    file.project.document.rasterOptions.mode = mode
+    const parsed = parseProjectFile(serializeProjectFile(file))
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    expect(parsed.file.project.document.rasterOptions.mode).toBe('center')
+    expect(parsed.file.project.document.shapes).toEqual(project.document.shapes)
+    expect(parsed.file.project.document.rasterRuleNoticePending).toBe(true)
+    const exported = createProjectFile(parsed.file.project)
+    expect(exported.project.document.rasterRuleNoticePending).toBeUndefined()
+    expect(exported.project.document.rasterOptions.mode).toBe('center')
+  })
   it('只导出名称和完整编辑文档，不携带来源项目 ID', () => {
     const project = projectFixture()
     const file = createProjectFile(project, '2026-08-31T01:02:03.000Z')

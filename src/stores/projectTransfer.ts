@@ -38,13 +38,16 @@ export function createProjectFile(
   project: Pick<PersistedProject, 'name' | 'document'>,
   exportedAt = new Date().toISOString(),
 ): ExportedProjectFileV1 {
+  const document = clonePlain(project.document)
+  document.rasterOptions.mode = 'center'
+  delete document.rasterRuleNoticePending
   return {
     format: PROJECT_FILE_FORMAT,
     version: PROJECT_FILE_VERSION,
     exportedAt,
     project: {
       name: project.name,
-      document: clonePlain(project.document),
+      document,
     },
   }
 }
