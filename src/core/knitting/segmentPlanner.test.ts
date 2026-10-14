@@ -145,6 +145,6 @@ describe('分段加减针说明', () => {
       { mode: 'center', symmetryOptimization: true },
       6,
     )
-    expect(description.lines).toEqual(['开放路径不形成织片'])
+    expect(description.lines).toEqual(['未闭合轮廓，不参与编织计算'])
   })
 })

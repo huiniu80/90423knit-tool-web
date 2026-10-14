@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { calculateGauge } from '../gauge/gauge'
-import { convertDimension, createShapeDimensionResults, formatCm } from './dimensionConversion'
+import { convertDimension, createShapeDimensionResults, formatCm, selectedShapeCounts } from './dimensionConversion'
 
 describe('dimension conversion', () => {
   it('同时给出 19cm 在 2.8行/cm 下的上下取整及偏差', () => {
@@ -24,13 +24,13 @@ describe('dimension conversion', () => {
   it('斜线拆分横纵结果，水平线省略零纵向跨度', () => {
     const gauge = calculateGauge({ sampleStitches: 20, sampleRows: 28, sampleWidthCm: 10, sampleHeightCm: 10 })
     const diagonal = createShapeDimensionResults({
-      id: 'diagonal', type: 'path', closed: false,
-      nodes: [{ anchor: { x: 1, y: 2 } }, { anchor: { x: 5, y: 7 } }],
-    }, gauge, { stitches: null, rows: null })
+      id: 'diagonal', type: 'path', closed: true,
+      nodes: [{ anchor: { x: 1, y: 2 } }, { anchor: { x: 5, y: 7 } }, { anchor: { x: 1, y: 7 } }],
+    }, gauge, { stitches: null, rows: null }).filter((item) => item.segmentIndex === 0)
     const horizontal = createShapeDimensionResults({
-      id: 'horizontal', type: 'path', closed: false,
-      nodes: [{ anchor: { x: 1, y: 2 } }, { anchor: { x: 5, y: 2 } }],
-    }, gauge, { stitches: null, rows: null })
+      id: 'horizontal', type: 'path', closed: true,
+      nodes: [{ anchor: { x: 1, y: 2 } }, { anchor: { x: 5, y: 2 } }, { anchor: { x: 1, y: 7 } }],
+    }, gauge, { stitches: null, rows: null }).filter((item) => item.segmentIndex === 0)
     expect(diagonal.map((item) => item.axis)).toEqual(['stitches', 'rows'])
     expect(horizontal.map((item) => item.axis)).toEqual(['stitches'])
   })
@@ -40,9 +40,9 @@ describe('dimension conversion', () => {
       sampleStitches: 11, sampleRows: 10, sampleWidthCm: 10, sampleHeightCm: 6,
     })
     const results = createShapeDimensionResults({
-      id: 'almost-horizontal', type: 'path', closed: false,
-      nodes: [{ anchor: { x: 1, y: 2 } }, { anchor: { x: 25.82, y: 2.18 } }],
-    }, gauge, { stitches: null, rows: null })
+      id: 'almost-horizontal', type: 'path', closed: true,
+      nodes: [{ anchor: { x: 1, y: 2 } }, { anchor: { x: 25.82, y: 2.18 } }, { anchor: { x: 1, y: 7 } }],
+    }, gauge, { stitches: null, rows: null }).filter((item) => item.segmentIndex === 0)
 
     expect(results.map((item) => item.axis)).toEqual(['stitches'])
   })
@@ -52,18 +52,26 @@ describe('dimension conversion', () => {
       sampleStitches: 20, sampleRows: 20, sampleWidthCm: 10, sampleHeightCm: 10,
     })
     const atBoundary = createShapeDimensionResults({
-      id: 'half-row', type: 'path', closed: false,
-      nodes: [{ anchor: { x: 1, y: 2 } }, { anchor: { x: 5, y: 2.25 } }],
-    }, gauge, { stitches: null, rows: null })
+      id: 'half-row', type: 'path', closed: true,
+      nodes: [{ anchor: { x: 1, y: 2 } }, { anchor: { x: 5, y: 2.25 } }, { anchor: { x: 1, y: 7 } }],
+    }, gauge, { stitches: null, rows: null }).filter((item) => item.segmentIndex === 0)
     const shallowCurve = createShapeDimensionResults({
-      id: 'shallow-curve', type: 'path', closed: false,
+      id: 'shallow-curve', type: 'path', closed: true,
       nodes: [
         { anchor: { x: 1, y: 2 }, outControl: { x: 2, y: 2.1 } },
         { anchor: { x: 5, y: 2.1 }, inControl: { x: 4, y: 2.1 } },
+        { anchor: { x: 1, y: 7 } },
       ],
-    }, gauge, { stitches: null, rows: null })
+    }, gauge, { stitches: null, rows: null }).filter((item) => item.segmentIndex === 0)
 
     expect(atBoundary.map((item) => item.axis)).toEqual(['stitches', 'rows'])
     expect(shallowCurve.map((item) => item.axis)).toEqual(['stitches', 'rows'])
+  })
+  it('开放轮廓不提供局部取整或整体针行目标', () => {
+    const shape = { id: 'open', type: 'path', closed: false, nodes: [{ anchor: { x: 1, y: 2 } }, { anchor: { x: 5, y: 7 } }] } as const
+    const gauge = calculateGauge({ sampleStitches: 20, sampleRows: 28, sampleWidthCm: 10, sampleHeightCm: 10 })
+    const path = { ...shape, nodes: [...shape.nodes] }
+    expect(createShapeDimensionResults(path, gauge, { stitches: 'ceil', rows: 'floor' })).toEqual([])
+    expect(selectedShapeCounts(path, gauge, { stitches: 'ceil', rows: 'floor' })).toEqual({ stitches: null, rows: null })
   })
 })

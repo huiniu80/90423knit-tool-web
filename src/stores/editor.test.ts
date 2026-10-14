@@ -29,6 +29,34 @@ function stubBrowser(storage: MemoryStorage): void {
 }
 
 describe('Editor Store', () => {
+  it('复杂三段保留针格但整片不生成计划及编织导出', () => {
+    const store = useEditorStore()
+    store.addPath([{ anchor: { x: 2, y: 1 } }, { anchor: { x: 12, y: 1 } },
+      { anchor: { x: 12, y: 9 } }, { anchor: { x: 10, y: 9 } }, { anchor: { x: 10, y: 3 } },
+      { anchor: { x: 8, y: 3 } }, { anchor: { x: 8, y: 9 } }, { anchor: { x: 6, y: 9 } },
+      { anchor: { x: 6, y: 3 } }, { anchor: { x: 4, y: 3 } }, { anchor: { x: 4, y: 9 } },
+      { anchor: { x: 2, y: 9 } }], true)
+    expect(store.selectedShapePlan?.rasterRows.some((row) => row.segments.length === 3)).toBe(true)
+    expect(store.selectedShapePlan).toMatchObject({ calculationMessage: '不支持的复杂断开结构，请修改轮廓', instructions: [], canExport: false })
+    store.$dispose()
+  })
+  it('无效织片状态明确，源数据保存且其他织片不受影响，修正后恢复', () => {
+    const store = useEditorStore()
+    store.addDefaultShape('rectangle')
+    const validId = store.selectedShapeId!
+    const validRows = store.shapePlans.find((plan) => plan.shapeId === validId)!.rasterRows
+    store.addDefaultShape('rectangle')
+    const invalidId = store.selectedShapeId!
+    store.replaceShape({ id: invalidId, type: 'rectangle', x: -1, y: 0, widthCm: 4, heightCm: 3 })
+    expect(store.selectedShapePlan).toMatchObject({ calculationMessage: '织片超出计算范围，请移回画布或扩大画布', canExport: false, instructions: [], rasterRows: [] })
+    expect(store.createProjectExport()!.project.document.shapes.find((shape) => shape.id === invalidId)).toMatchObject({ x: -1 })
+    expect(store.shapePlans.find((plan) => plan.shapeId === validId)!.rasterRows).toBe(validRows)
+    store.replaceShape({ id: invalidId, type: 'rectangle', x: 1, y: 0, widthCm: 4, heightCm: 3 })
+    expect(store.selectedShapePlan?.canExport).toBe(true)
+    store.replaceShape({ id: invalidId, type: 'path', closed: false, nodes: [{ anchor: { x: 1, y: 1 } }, { anchor: { x: 8, y: 8 } }] })
+    expect(store.selectedShapePlan).toMatchObject({ calculationMessage: '未闭合轮廓，不参与编织计算', dimensions: [], canExport: false, instructions: [] })
+    store.$dispose()
+  })
   it('有效密度提交重算并提示一次，无效提交不新增历史或提示', () => {
     vi.useFakeTimers()
     const store = useEditorStore()

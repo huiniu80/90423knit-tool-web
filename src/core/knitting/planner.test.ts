@@ -21,6 +21,15 @@ function row(rowIndex: number, startStitch: number, endStitch: number): RasterRo
 }
 
 describe('Knitting Planner', () => {
+  it('三段以上和中途整行无针暂停整片计划，外部空行不阻止', () => {
+    const empty: RasterRow = { rowIndex: 1, yCm: 1.5, stitchCount: 0, segments: [] }
+    expect(generateInstructions([row(0, 2, 8), empty, row(2, 2, 8)], 'bottom-up')).toEqual([])
+    const triple: RasterRow = { rowIndex: 1, yCm: 1.5, stitchCount: 6, segments: [
+      { startStitch: 0, endStitch: 1 }, { startStitch: 4, endStitch: 5 }, { startStitch: 8, endStitch: 9 },
+    ] }
+    expect(generateInstructions([row(0, 0, 9), triple], 'bottom-up')).toEqual([])
+    expect(generateInstructions([empty, row(2, 2, 8), { ...empty, rowIndex: 3 }], 'bottom-up')).toHaveLength(1)
+  })
   it('识别左减1针', () => {
     const result = generateInstructions([row(0, 10, 14), row(1, 11, 14)], 'bottom-up')
     expect(result[1]?.leftChange).toBe(-1)

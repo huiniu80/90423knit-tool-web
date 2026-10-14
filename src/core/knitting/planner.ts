@@ -28,6 +28,7 @@ export function generateInstructions(
   _direction: KnitDirection,
 ): KnittingInstruction[] {
   const physicalRows = activeSpan(rasterRows)
+  if (physicalRows.some((row) => !row.stitchCount || row.segments.length > 2)) return []
   const ordered = physicalRows
 
   return ordered.map((row, index) => {

@@ -15,9 +15,10 @@ import type {
 import type { GaugeInput, FabricCanvas } from '../core/gauge/gauge.types'
 import type { PathNode, PathShape, Point, Shape, ShapeType } from '../core/geometry/shape.types'
 import { joinConnectedOpenPaths } from '../core/geometry/path'
+import { shapeCalculationIssue, shapeIssueMessage } from '../core/geometry/shapeValidation'
 import { generateInstructions } from '../core/knitting/planner'
 import type { KnitDirection } from '../core/knitting/planner.types'
-import { mergeRasterRows, rasterize, rasterizeShapes } from '../core/raster/rasterizer'
+import { mergeRasterRows, rasterize, rasterizeShapes, shapeForRaster } from '../core/raster/rasterizer'
 import type { RasterOptions, RasterRow } from '../core/raster/raster.types'
 import type {
   EditorTool,
@@ -293,6 +294,11 @@ export const useEditorStore = defineStore('editor', () => {
     },
   })
   const shapePlans = computed<ShapePlan[]>(() => shapeRasterRows.value.map(({ shape, rows, isFabric }) => {
+    const policy = shapeRoundingPolicies.value[shape.id] ?? { stitches: null, rows: null }
+    const issue = shapeCalculationIssue(shape, fabric.value) ?? shapeCalculationIssue(
+      shapeForRaster(shape, gauge.value, { ...selectedShapeCounts(shape, gauge.value, policy), direction: 'bottom-up' }),
+      fabric.value,
+    )
     const shapeDirection = directionForShape(shape.id)
     const cachedInstructions = instructionCache.get(shape.id)
     const planInstructions = cachedInstructions?.rows === rows
@@ -307,6 +313,12 @@ export const useEditorStore = defineStore('editor', () => {
       gauge.value,
       shapeRoundingPolicies.value[shape.id] ?? { stitches: null, rows: null },
     )
+    const activeRows = rows.filter((row) => row.stitchCount > 0)
+    const complex = activeRows.length > 0 && planInstructions.length === 0
+    const calculationMessage = gridAssessment.value.status === 'blocked' ? '网格超限，已暂停计算'
+      : issue ? shapeIssueMessage[issue]
+      : complex ? '不支持的复杂断开结构，请修改轮廓'
+      : !activeRows.length ? '目标小于当前密度下的一针或一行，未落入针格' : ''
     return {
       shapeId: shape.id,
       shapeName: shape.name,
@@ -319,6 +331,8 @@ export const useEditorStore = defineStore('editor', () => {
       isFabric,
       dimensions,
       roundingPending: dimensions.some((dimension) => !dimension.confirmed),
+      calculationMessage,
+      canExport: !calculationMessage,
     }
   }))
   const selectedShapePlan = computed(() =>
@@ -977,6 +991,7 @@ export const useEditorStore = defineStore('editor', () => {
     activeProject,
     storageStatus,
     notice,
+    showNotice,
     maxProjects: MAX_PROJECTS,
     gaugeInput,
     fabric,

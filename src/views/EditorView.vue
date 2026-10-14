@@ -10,7 +10,7 @@ import { useEditorStore } from '../stores/editor'
 import { loadSidebarExpanded, saveSidebarExpanded } from './editorLayoutPreferences'
 
 const store = useEditorStore()
-const { activeProject, gridAssessment, hasUnfinishedDraft, projects, storageStatus, notice } = storeToRefs(store)
+const { activeProject, gridAssessment, hasUnfinishedDraft, projects, storageStatus, notice, shapePlans } = storeToRefs(store)
 const canvasRef = ref<InstanceType<typeof KnittingCanvas> | null>(null)
 const sidebarExpanded = ref(loadSidebarExpanded())
 const projectLibraryOpen = ref(false)
@@ -96,6 +96,9 @@ onBeforeUnmount(() => {
       <section class="workspace">
         <CanvasToolbar :sidebar-expanded="sidebarExpanded" @toggle-sidebar="toggleSidebar"
           @fit="canvasRef?.fitCanvas()" @export="canvasRef?.exportCanvas()" />
+        <div v-if="shapePlans.some((plan) => plan.calculationMessage)" class="calculation-message" role="status">
+          <p v-for="plan in shapePlans.filter((item) => item.calculationMessage)" :key="plan.shapeId">{{ plan.shapeName || '未命名轮廓' }}：{{ plan.calculationMessage }}</p>
+        </div>
         <KnittingCanvas v-if="gridAssessment.status !== 'blocked'" ref="canvasRef" />
         <div v-else class="grid-blocked-placeholder" role="alert">
           <strong>已暂停生成编织图解</strong>

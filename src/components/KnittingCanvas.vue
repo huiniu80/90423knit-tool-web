@@ -48,6 +48,7 @@ import type {
 import { useEditorStore } from '../stores/editor'
 import { avoidPinnedCardCollisions } from './annotationCardLayout'
 import { createCanvasExportLayout } from './canvasExportLayout'
+import { mergeRasterRows } from '../core/raster/rasterizer'
 import { layoutMarkersGlobally } from './markerLayout'
 import type { LineObstacle } from './markerLayout'
 
@@ -161,6 +162,9 @@ const selectedGridAnnotationSegment = ref<{ shapeId: string; segmentIndex: numbe
 const highlightedAnnotationKey = ref<string | null>(null)
 const expandedAnnotationKey = ref<string | null>(null)
 const exportingCanvas = ref(false)
+const displayedShapes = computed(() => exportingCanvas.value
+  ? shapes.value.filter((shape) => shapePlans.value.find((plan) => plan.shapeId === shape.id)?.canExport)
+  : shapes.value)
 const pinnedAnnotationPositions = ref<Record<string, Point>>({})
 const annotationHovered = ref(false)
 const annotationDragHovered = ref(false)
@@ -213,7 +217,9 @@ const stageCursor = computed(() => {
 })
 
 const rasterShapeConfig = computed<KonvaShapeConfig>(() => {
-  const rows = rasterRows.value
+  const rows = exportingCanvas.value
+    ? mergeRasterRows(shapePlans.value.filter((plan) => plan.canExport).map((plan) => plan.rasterRows), gauge.value, fabric.value)
+    : rasterRows.value
   const stitchWidthPx = gauge.value.stitchWidthCm * zoom.value
   const rowHeightPx = gauge.value.rowHeightCm * zoom.value
   const height = fabricHeightPx.value
@@ -399,7 +405,7 @@ function dimensionOptionText(
 const dimensionLabels = computed<DimensionLabelModel[]>(() => {
   if (viewMode.value !== 'overlay') return []
   const drafts: Array<Omit<DimensionLabelModel, 'y' | 'connectorPoints'> & { preferredY: number }> = []
-  for (const result of shapePlans.value.flatMap((plan) => plan.dimensions)) {
+  for (const result of shapePlans.value.filter((plan) => !exportingCanvas.value || plan.canExport).flatMap((plan) => plan.dimensions)) {
     const title = `${dimensionPrefix(result.axis)} ${formatCm(result.targetCm)}cm / ${result.selected?.count ?? '待定'}${dimensionUnit(result.axis)}`
     const formula = result.exact
       ? `${formatCm(result.targetCm)}cm × ${formatCm(result.densityPerCm)}${dimensionUnit(result.axis)}/cm = ${result.selected!.count}${dimensionUnit(result.axis)}`
@@ -544,7 +550,7 @@ const annotationModels = computed<AnnotationModel[]>(() => {
       : segment.segmentIndex
     if (canonicalSegmentIndex !== segment.segmentIndex) continue
     const shapePlan = planByShapeId.get(segment.shapeId)
-    if (!shapePlan) continue
+    if (!shapePlan || shapePlan.calculationMessage) continue
     const description = describeBoundarySegmentShaping(
       segment,
       shapePlan.direction,
@@ -1743,6 +1749,13 @@ function fitCanvas(): void {
 }
 
 async function exportCanvas(): Promise<void> {
+  if (!shapePlans.value.some((plan) => plan.canExport)) {
+    store.showNotice('没有可导出的有效织片，请先闭合或修正轮廓。源轮廓仍可保存。')
+    return
+  }
+  if (shapePlans.value.some((plan) => !plan.canExport)) {
+    store.showNotice('本次图片仅包含有效织片，未闭合、无效或不支持的织片已排除。完整源轮廓仍可保存。')
+  }
   const stage = stageRef.value?.getNode()
   if (!stage) return
 
@@ -1794,8 +1807,17 @@ async function exportCanvas(): Promise<void> {
     ].join('')
     const downloadLink = document.createElement('a')
     downloadLink.download = `编织图解-${timestamp}.png`
-    downloadLink.href = exportedCanvas.toDataURL('image/png')
+    const blob = await new Promise<Blob | null>((resolve) => exportedCanvas.toBlob(resolve, 'image/png'))
+    if (!blob) {
+      store.showNotice('图片生成失败，请重试。源轮廓仍可保存。')
+      return
+    }
+    const downloadUrl = URL.createObjectURL(blob)
+    downloadLink.href = downloadUrl
+    document.body.appendChild(downloadLink)
     downloadLink.click()
+    downloadLink.remove()
+    setTimeout(() => URL.revokeObjectURL(downloadUrl), 60000)
   } finally {
     exportingCanvas.value = false
     stageSize.value = previousStageSize
@@ -1890,7 +1912,7 @@ defineExpose({ fitCanvas, exportCanvas })
             stroke: '#287d72', strokeWidth: 1.4, dash: [6, 4], opacity: 0.78, listening: false,
           }" />
 
-          <template v-for="shape in shapes" :key="shape.id">
+          <template v-for="shape in displayedShapes" :key="shape.id">
             <v-rect v-if="shape.type === 'rectangle'" :config="shapeConfig(shape)" />
             <v-circle v-else-if="shape.type === 'circle'" :config="shapeConfig(shape)" />
             <v-ellipse v-else-if="shape.type === 'ellipse'" :config="shapeConfig(shape)" />
@@ -1898,7 +1920,7 @@ defineExpose({ fitCanvas, exportCanvas })
             <v-line v-else :config="shapeConfig(shape)" />
           </template>
 
-          <template v-if="selectionRect">
+          <template v-if="selectionRect && !exportingCanvas">
             <v-line v-if="mirrorAxisLine" :config="{
               ...mirrorAxisLine, stroke: '#287d72', strokeWidth: 1.4,
               dash: [6, 5], opacity: 0.72, listening: false,
@@ -1910,14 +1932,14 @@ defineExpose({ fitCanvas, exportCanvas })
             }" />
           </template>
 
-          <v-circle v-for="handle in polygonHandles" :key="`point-${handle.index}`" :config="{
+          <v-circle v-for="handle in exportingCanvas ? [] : polygonHandles" :key="`point-${handle.index}`" :config="{
             name: `point:${selectedShapeId}:${handle.index}`, x: handle.x, y: handle.y,
             radius: selectedPointIndex === handle.index ? 6 : 4.5,
             fill: selectedPointIndex === handle.index ? '#e3a43b' : '#fffdf8',
             stroke: '#b24631', strokeWidth: 1.8,
           }" />
 
-          <template v-if="pathAnchorHandles.length">
+          <template v-if="pathAnchorHandles.length && !exportingCanvas">
             <v-line v-for="handle in pathControlHandles" :key="`guide-${handle.control}-${handle.nodeIndex}`"
               :config="{
                 points: [handle.anchor.x, handle.anchor.y, handle.x, handle.y],
@@ -1942,7 +1964,7 @@ defineExpose({ fitCanvas, exportCanvas })
             }" />
           </template>
 
-          <template v-if="draftPoints.length">
+          <template v-if="draftPoints.length && !exportingCanvas">
             <v-line :config="{ points: draftCanvasPoints, stroke: '#b24631', strokeWidth: 2, dash: [7, 4] }" />
             <v-circle v-for="(point, index) in draftPoints" :key="`draft-${index}`" :config="{
               x: toCanvasPoint(point).x, y: toCanvasPoint(point).y,
@@ -1951,7 +1973,7 @@ defineExpose({ fitCanvas, exportCanvas })
             }" />
           </template>
 
-          <template v-if="draftPath">
+          <template v-if="draftPath && !exportingCanvas">
             <v-path :config="{
               data: pathData(draftPath), stroke: '#b24631', strokeWidth: 2,
               fill: 'transparent', dash: [7, 4], listening: false,

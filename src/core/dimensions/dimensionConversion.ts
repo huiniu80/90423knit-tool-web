@@ -86,6 +86,7 @@ export function createShapeDimensionResults(
   gauge: Gauge,
   policy: ShapeRoundingPolicy,
 ): DimensionConversionResult[] {
+  if (shape.type === 'path' && !shape.closed) return []
   return getShapeBoundarySegments(shape).flatMap((segment) => {
     const bounds = getShapeBounds(segment.rasterShape)
     const results: DimensionConversionResult[] = []
@@ -122,6 +123,7 @@ export function selectedShapeCounts(
   gauge: Gauge,
   policy: ShapeRoundingPolicy,
 ): { stitches: number | null; rows: number | null } {
+  if (shape.type === 'path' && !shape.closed) return { stitches: null, rows: null }
   const bounds = getShapeBounds(shape)
   const stitchResult = convertDimension(
     shape.id, -1, 'stitches', bounds.width, gauge.stitchesPerCm,

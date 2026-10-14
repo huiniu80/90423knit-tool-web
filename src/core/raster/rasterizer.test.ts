@@ -39,12 +39,14 @@ describe('Rasterizer', () => {
     expect(activeRows[0]?.segments).toEqual([{ startStitch: 2, endStitch: 4 }])
   })
 
-  it('边界外的针格会被裁剪', () => {
+  it('越界织片整体暂停，移回后恢复且不改写源轮廓', () => {
     const shape: Shape = { id: 'r', type: 'rectangle', x: -4, y: 0, widthCm: 8, heightCm: 1 }
-    const first = rasterize(shape, gauge, canvas, {
+    const options = {
       mode: 'outside', symmetryOptimization: false,
-    })[0]
-    expect(first?.segments).toEqual([{ startStitch: 0, endStitch: 3 }])
+    } as const
+    expect(rasterize(shape, gauge, canvas, options)).toEqual([])
+    expect(rasterize({ ...shape, x: 0 }, gauge, canvas, options)[0]?.stitchCount).toBe(8)
+    expect(shape.x).toBe(-4)
   })
 
   it('多个重叠图形的针格会合并', () => {
@@ -154,7 +156,7 @@ describe('Rasterizer', () => {
     expect(before).toEqual(withoutOptimization)
   })
 
-  it('开放路径按曲线经过的针格生成针格，闭合路径仍按面积计算', () => {
+  it('开放曲线无针格，闭合后按面积计算', () => {
     const path: Shape = {
       id: 'path', type: 'path', closed: false,
       nodes: [
@@ -167,7 +169,7 @@ describe('Rasterizer', () => {
     const openRows = rasterize(path, gauge, canvas, {
       mode: 'center', symmetryOptimization: true,
     })
-    expect(openRows.some((row) => row.stitchCount > 0)).toBe(true)
+    expect(openRows).toEqual([])
 
     const closedRows = rasterize({ ...path, closed: true }, gauge, canvas, {
       mode: 'center', symmetryOptimization: true,
@@ -175,7 +177,7 @@ describe('Rasterizer', () => {
     expect(closedRows.some((row) => row.stitchCount > 0)).toBe(true)
   })
 
-  it('水平开放线生成单行连续针段', () => {
+  it('水平开放线不生成针格', () => {
     const shape: Shape = {
       id: 'horizontal', type: 'path', closed: false,
       nodes: [{ anchor: { x: 2, y: 1.2 } }, { anchor: { x: 7.9, y: 1.2 } }],
@@ -183,11 +185,10 @@ describe('Rasterizer', () => {
     const active = rasterize(shape, gauge, canvas, {
       mode: 'inside', symmetryOptimization: false,
     }).filter((row) => row.stitchCount > 0)
-    expect(active).toHaveLength(1)
-    expect(active[0]?.segments).toEqual([{ startStitch: 2, endStitch: 7 }])
+    expect(active).toEqual([])
   })
 
-  it('竖直开放线在每个经过行保持单针宽', () => {
+  it('竖直开放线不生成针格', () => {
     const shape: Shape = {
       id: 'vertical', type: 'path', closed: false,
       nodes: [{ anchor: { x: 4.2, y: 0 } }, { anchor: { x: 4.2, y: 3 } }],
@@ -195,11 +196,10 @@ describe('Rasterizer', () => {
     const active = rasterize(shape, gauge, canvas, {
       mode: 'outside', symmetryOptimization: false,
     }).filter((row) => row.stitchCount > 0)
-    expect(active).toHaveLength(6)
-    expect(active.every((row) => row.segments[0]?.startStitch === 4 && row.stitchCount === 1)).toBe(true)
+    expect(active).toEqual([])
   })
 
-  it('斜线与弧线栅格连续且不受面积离散策略影响', () => {
+  it('开放弧线不因旧策略生成轨迹', () => {
     const arc: Shape = {
       id: 'arc', type: 'path', closed: false,
       nodes: [
@@ -214,10 +214,10 @@ describe('Rasterizer', () => {
       mode: 'inside', symmetryOptimization: true,
     })
     expect(inside).toEqual(center)
-    expect(center.filter((row) => row.stitchCount > 0).length).toBeGreaterThan(5)
+    expect(center).toEqual([])
   })
 
-  it('开放线超出画布的部分被裁剪且不会沿边缘涂抹', () => {
+  it('越界开放线不生成裁剪轨迹', () => {
     const shape: Shape = {
       id: 'clipped-line', type: 'path', closed: false,
       nodes: [{ anchor: { x: -20, y: 1.2 } }, { anchor: { x: 3.2, y: 1.2 } }],
@@ -225,7 +225,18 @@ describe('Rasterizer', () => {
     const active = rasterize(shape, gauge, canvas, {
       mode: 'center', symmetryOptimization: false,
     }).filter((row) => row.stitchCount > 0)
-    expect(active).toHaveLength(1)
-    expect(active[0]?.segments).toEqual([{ startStitch: 0, endStitch: 3 }])
+    expect(active).toEqual([])
+  })
+  it('源轮廓在画布内但取整后越界时仍暂停', () => {
+    const shape: Shape = { id: 'rounding', type: 'rectangle', x: 0.1, y: 0, widthCm: 2.1, heightCm: 1 }
+    expect(rasterize(shape, gauge, canvas, { mode: 'center', symmetryOptimization: false }, { stitches: 3, rows: null, direction: 'bottom-up' })).toEqual([])
+    expect(rasterize(shape, gauge, canvas, { mode: 'center', symmetryOptimization: false }, { stitches: 2, rows: null, direction: 'bottom-up' })[0]?.stitchCount).toBe(2)
+  })
+  it('无效轮廓不影响其他独立织片的总览结果', () => {
+    const valid: Shape = { id: 'valid', type: 'rectangle', x: 2, y: 0, widthCm: 3, heightCm: 3 }
+    const invalid: Shape = { id: 'invalid', type: 'polygon', points: [{ x: 3, y: 1 }, { x: 8, y: 8 }, { x: 3, y: 8 }, { x: 8, y: 1 }] }
+    const options = { mode: 'center', symmetryOptimization: false } as const
+    expect(rasterize(invalid, gauge, canvas, options)).toEqual([])
+    expect(rasterizeShapes([valid, invalid], gauge, canvas, options)).toEqual(rasterize(valid, gauge, canvas, options))
   })
 })

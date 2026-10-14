@@ -14,6 +14,7 @@ import type {
 import { rasterize } from '../raster/rasterizer'
 import type { RasterOptions, RasterRow } from '../raster/raster.types'
 import { getShapeBounds } from '../geometry/geometry'
+import { shapeCalculationIssue, shapeIssueMessage } from '../geometry/shapeValidation'
 
 export interface SegmentShapingDescription {
   boundarySide: ShapingSide | 'both'
@@ -140,18 +141,14 @@ export function describeBoundarySegmentShaping(
   rasterOptions: RasterOptions,
   outlineCenterX: number,
 ): SegmentShapingDescription {
-  if (segment.sourceShape.type === 'path' && !segment.sourceShape.closed) {
-    return {
-      boundarySide: 'both',
-      lines: ['开放路径不形成织片'],
-      markers: [],
-    }
-  }
+  const issue = shapeCalculationIssue(segment.sourceShape, canvas)
+  if (issue) return { boundarySide: 'both', lines: [shapeIssueMessage[issue]], markers: [] }
 
   const rows = rasterize(segment.sourceShape, gauge, canvas, rasterOptions)
   const instructions = generateInstructions(rows, 'bottom-up')
   const activeRows = rows.filter((row) => row.stitchCount > 0)
   if (!activeRows.length) return { boundarySide: 'both', lines: ['未落入针格'], markers: [] }
+  if (!instructions.length) return { boundarySide: 'both', lines: ['不支持的复杂断开结构，请修改轮廓'], markers: [] }
 
   const bounds = getShapeBounds(segment.rasterShape)
   const firstRow = activeRows[0]

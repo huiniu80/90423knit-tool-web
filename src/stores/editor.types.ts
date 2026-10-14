@@ -28,4 +28,6 @@ export interface ShapePlan {
   isFabric: boolean
   dimensions: DimensionConversionResult[]
   roundingPending: boolean
+  calculationMessage: string
+  canExport: boolean
 }
