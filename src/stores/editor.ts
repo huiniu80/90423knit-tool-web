@@ -732,10 +732,7 @@ export const useEditorStore = defineStore('editor', () => {
 
   function cancelDrawing(): void {
     const sessionId = drawingSessionId.value
-    if (sessionId) {
-      undoStack.value = undoStack.value.filter((entry) => entry.drawingSessionId !== sessionId)
-      redoStack.value = redoStack.value.filter((entry) => entry.drawingSessionId !== sessionId)
-    }
+    if (sessionId && hasUnfinishedDraft.value) pushUndo(captureHistorySnapshot(), 'drawing', sessionId)
     draftPoints.value = []
     draftPathNodes.value = []
     draftTool.value = null

@@ -570,13 +570,16 @@ describe('Editor Store', () => {
     expect(store.activeTool).toBe('polygon')
   })
 
-  it('取消草稿会丢弃该绘图会话的撤销和重做记录', () => {
+  it('取消草稿一步恢复全部落点和控制柄，重做再次取消并清除旧重做分支', () => {
     const store = useEditorStore()
     store.addDefaultShape('circle')
     const countAfterCircle = store.shapes.length
     store.activeTool = 'path'
     store.addDraftPathNode({ anchor: { x: 2, y: 2 } })
     store.addDraftPathNode({ anchor: { x: 8, y: 2 } })
+    store.addDraftPathNode({ anchor: { x: 8, y: 8 }, inControl: { x: 5, y: 7 } })
+    const completeDraft = JSON.parse(JSON.stringify(store.draftPathNodes))
+    store.addDraftPathNode({ anchor: { x: 2, y: 8 } })
     store.undo()
     expect(store.canRedo).toBe(true)
 
@@ -584,10 +587,18 @@ describe('Editor Store', () => {
     expect(store.canRedo).toBe(false)
     expect(store.draftPathNodes).toHaveLength(0)
     store.undo()
-    expect(store.shapes).toHaveLength(countAfterCircle - 1)
+    expect(store.shapes).toHaveLength(countAfterCircle)
+    expect(store.draftPathNodes).toEqual(completeDraft)
+    expect(store.activeTool).toBe('path')
+    store.redo()
+    expect(store.draftPathNodes).toHaveLength(0)
+    expect(store.shapes).toHaveLength(countAfterCircle)
+    store.undo()
+    store.undo()
+    expect(store.draftPathNodes).toHaveLength(2)
   })
 
-  it('取消草稿后撤销期间的参数修改不会恢复草稿', () => {
+  it('取消步骤恢复完整草稿，随后内容撤销不改草稿，空取消不占步骤', () => {
     const store = useEditorStore()
     store.activeTool = 'path'
     store.addDraftPathNode({ anchor: { x: 2, y: 2 } })
@@ -596,11 +607,21 @@ describe('Editor Store', () => {
 
     store.cancelDrawing()
     store.undo()
+    expect(store.gaugeInput.sampleStitches).toBe(12)
+    expect(store.draftPathNodes).toHaveLength(2)
+    store.undo()
+    expect(store.draftPathNodes).toHaveLength(1)
+    store.undo()
     expect(store.gaugeInput.sampleStitches).toBe(10)
-    expect(store.draftPathNodes).toHaveLength(0)
+    expect(store.draftPathNodes).toHaveLength(1)
     store.redo()
     expect(store.gaugeInput.sampleStitches).toBe(12)
-    expect(store.draftPathNodes).toHaveLength(0)
+    expect(store.draftPathNodes).toHaveLength(1)
+    store.redo()
+    store.redo()
+    store.cancelDrawing()
+    store.undo()
+    expect(store.draftPathNodes).toHaveLength(2)
   })
 
   it('编织参数和画布尺寸按步骤撤销，固定策略和方向不增加步骤', () => {
@@ -668,6 +689,38 @@ describe('Editor Store', () => {
 
     expect(store.gaugeInput.sampleStitches).toBe(11)
     expect(store.canUndo).toBe(false)
+    for (let index = 0; index < 100; index += 1) store.redo()
+    expect(store.gaugeInput.sampleStitches).toBe(111)
+    expect(store.canRedo).toBe(false)
+  })
+
+  it('视图与工具不占历史，连续拖动一步，切换后草稿历史隔离', () => {
+    stubBrowser(new MemoryStorage())
+    const store = useEditorStore()
+    store.addDefaultShape('rectangle')
+    const original = JSON.parse(JSON.stringify(store.selectedShape!))
+    store.beginShapeMutation()
+    store.updateShapeLive({ ...original, x: original.x + 1 })
+    store.updateShapeLive({ ...original, x: original.x + 2 })
+    store.commitShapeMutation()
+    store.viewMode = 'grid'
+    store.zoom = 40
+    store.activeTool = 'pan'
+    store.undo()
+    expect(store.selectedShape).toEqual(original)
+    expect(store.viewMode).toBe('grid')
+    expect(store.zoom).toBe(40)
+    expect(store.activeTool).toBe('pan')
+    store.redo()
+    expect(store.selectedShape).toEqual({ ...original, x: original.x + 2 })
+    store.activeTool = 'path'
+    store.addDraftPathNode({ anchor: { x: 1, y: 1 } })
+    store.cancelDrawing()
+    expect(store.createProject(true)).not.toBeNull()
+    store.undo()
+    expect(store.draftPathNodes).toEqual([])
+    expect(store.shapes).toEqual([])
+    store.$dispose()
   })
 
   it('相接的开放路径自动拼合并在围成轮廓时转为织片', () => {
