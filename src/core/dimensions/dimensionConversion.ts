@@ -1,6 +1,6 @@
 import type { Gauge } from '../gauge/gauge.types'
 import { getShapeBoundarySegments } from '../geometry/boundarySegments'
-import { getShapeBounds } from '../geometry/geometry'
+import { getShapeBounds, resizeShapeToBounds } from '../geometry/geometry'
 import type { Point, Shape } from '../geometry/shape.types'
 
 export type RoundingDirection = 'floor' | 'ceil'
@@ -16,6 +16,7 @@ export interface RoundedDimensionOption {
   count: number
   actualCm: number
   deviationCm: number
+  valid: boolean
 }
 
 export interface DimensionConversionResult {
@@ -44,7 +45,7 @@ function option(
   densityPerCm: number,
 ): RoundedDimensionOption {
   const actualCm = count / densityPerCm
-  return { direction, count, actualCm, deviationCm: actualCm - targetCm }
+  return { direction, count, actualCm, deviationCm: actualCm - targetCm, valid: count > 0 }
 }
 
 export function convertDimension(
@@ -58,12 +59,15 @@ export function convertDimension(
 ): DimensionConversionResult {
   const rawCount = targetCm * densityPerCm
   const nearest = Math.round(rawCount)
-  const exact = Math.abs(rawCount - nearest) < DIMENSION_EPSILON
+  const exact = nearest > 0 && Math.abs(rawCount - nearest) < DIMENSION_EPSILON
   const floorCount = exact ? nearest : Math.floor(rawCount)
   const ceilCount = exact ? nearest : Math.ceil(rawCount)
   const floor = option('floor', floorCount, targetCm, densityPerCm)
   const ceil = option('ceil', ceilCount, targetCm, densityPerCm)
-  const selected = exact ? floor : direction === 'floor' ? floor : direction === 'ceil' ? ceil : null
+  const selected = exact && floor.valid ? floor
+    : direction === 'floor' && floor.valid ? floor
+    : direction === 'ceil' ? ceil
+    : floor.valid && rawCount - floorCount < ceilCount - rawCount - DIMENSION_EPSILON ? floor : ceil
   return {
     id: `${shapeId}:${segmentIndex}:${axis}`,
     shapeId,
@@ -75,7 +79,7 @@ export function convertDimension(
     floor,
     ceil,
     selected,
-    confirmed: exact || direction !== null,
+    confirmed: true,
     exact,
     anchor,
   }
@@ -87,6 +91,14 @@ export function createShapeDimensionResults(
   policy: ShapeRoundingPolicy,
 ): DimensionConversionResult[] {
   if (shape.type === 'path' && !shape.closed) return []
+  const originalBounds = getShapeBounds(shape)
+  const counts = selectedShapeCounts(shape, gauge, policy)
+  const width = counts.stitches === null ? originalBounds.width : counts.stitches / gauge.stitchesPerCm
+  const height = counts.rows === null ? originalBounds.height : counts.rows / gauge.rowsPerCm
+  const adjustedShape = resizeShapeToBounds(shape, {
+    x: originalBounds.x + (originalBounds.width - width) / 2, y: originalBounds.y, width, height,
+  })
+  const actualSegments = getShapeBoundarySegments(adjustedShape)
   return getShapeBoundarySegments(shape).flatMap((segment) => {
     const bounds = getShapeBounds(segment.rasterShape)
     const results: DimensionConversionResult[] = []
@@ -114,8 +126,23 @@ export function createShapeDimensionResults(
         { x: bounds.x + bounds.width / 2, y: segment.anchor.y },
       ))
     }
-    return results
+    const actualBounds = getShapeBounds(actualSegments.find((item) => item.segmentIndex === segment.segmentIndex)!.rasterShape)
+    return results.map((result) => {
+      const actualCm = result.axis === 'stitches' ? actualBounds.width : actualBounds.height
+      // Local spans are measurements of the same globally adjusted shape, never separate rounding choices.
+      return { ...result, selected: { direction: result.selected!.direction, count: actualCm * result.densityPerCm,
+        actualCm, deviationCm: actualCm - result.targetCm, valid: true }, confirmed: true }
+    })
   })
+}
+
+export function createOverallDimensionResults(shape: Shape, gauge: Gauge, policy: ShapeRoundingPolicy): DimensionConversionResult[] {
+  if (shape.type === 'path' && !shape.closed) return []
+  const bounds = getShapeBounds(shape)
+  return [
+    bounds.width > DIMENSION_EPSILON ? convertDimension(shape.id, -1, 'stitches', bounds.width, gauge.stitchesPerCm, policy.stitches, { x: bounds.x + bounds.width / 2, y: bounds.y }) : null,
+    bounds.height > DIMENSION_EPSILON ? convertDimension(shape.id, -1, 'rows', bounds.height, gauge.rowsPerCm, policy.rows, { x: bounds.x, y: bounds.y + bounds.height / 2 }) : null,
+  ].filter((item): item is DimensionConversionResult => Boolean(item))
 }
 
 export function selectedShapeCounts(

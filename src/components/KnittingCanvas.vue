@@ -387,37 +387,20 @@ function dimensionButtonTarget(name: string): {
   return { shapeId, axis, direction }
 }
 
-function dimensionTargetName(result: DimensionConversionResult, direction: RoundingDirection): string {
-  return `dimension|${result.shapeId}|${result.axis}|${direction}`
-}
-
 function dimensionUnit(axis: DimensionAxis): string {
   return axis === 'stitches' ? '针' : '行'
 }
 
 function dimensionPrefix(axis: DimensionAxis): string {
-  return axis === 'stitches' ? '宽' : '高'
-}
-
-function dimensionOptionText(
-  result: DimensionConversionResult,
-  direction: RoundingDirection,
-): string {
-  const choice = result[direction]
-  const effect = direction === 'floor'
-    ? result.axis === 'stitches' ? '更窄，可能更贴身' : '更短，可能更贴身'
-    : result.axis === 'stitches' ? '更宽，松量增加' : '更长，松量增加'
-  return `${direction === 'floor' ? '向下' : '向上'} ${choice.count}${dimensionUnit(result.axis)} · ${formatCm(choice.actualCm)}cm (${formatDeviation(choice.deviationCm)})\n${effect}`
+  return axis === 'stitches' ? '横向跨度' : '纵向跨度'
 }
 
 const dimensionLabels = computed<DimensionLabelModel[]>(() => {
   if (viewMode.value !== 'overlay') return []
   const drafts: Array<Omit<DimensionLabelModel, 'y' | 'connectorPoints'> & { preferredY: number }> = []
   for (const result of shapePlans.value.filter((plan) => !exportingCanvas.value || plan.canExport).flatMap((plan) => plan.dimensions)) {
-    const title = `${dimensionPrefix(result.axis)} ${formatCm(result.targetCm)}cm / ${result.selected?.count ?? '待定'}${dimensionUnit(result.axis)}`
-    const formula = result.exact
-      ? `${formatCm(result.targetCm)}cm × ${formatCm(result.densityPerCm)}${dimensionUnit(result.axis)}/cm = ${result.selected!.count}${dimensionUnit(result.axis)}`
-      : `${formatCm(result.targetCm)}cm × ${formatCm(result.densityPerCm)}${dimensionUnit(result.axis)}/cm = ${formatCm(result.rawCount)}${dimensionUnit(result.axis)}`
+    const title = `${dimensionPrefix(result.axis)} ${formatCm(result.targetCm)}cm`
+    const formula = `实际跨度 ${formatCm(result.selected!.actualCm)}cm · ${formatCm(result.selected!.count)}${dimensionUnit(result.axis)}`
     const width = stageSize.value.width < 800
       ? Math.max(160, Math.min(220, (stageSize.value.width - 26) / 2))
       : 280
@@ -566,6 +549,7 @@ const annotationModels = computed<AnnotationModel[]>(() => {
       fabric.value,
       store.rasterOptions,
       outlineCenterX,
+      { rows: shapePlan.rasterRows, instructions: shapePlan.instructions },
     )
     const sidePrefix = description.boundarySide === 'left'
       ? '左边界'
@@ -2049,36 +2033,9 @@ defineExpose({ fitCanvas, exportCanvas })
               x: 10, y: 29, width: label.width - 20, height: 15, text: label.formula,
               fill: '#3f4c46', fontSize: label.width < 240 ? 10.5 : 12, listening: false,
             }" />
-            <template v-if="!label.result.confirmed">
-              <v-text :config="{
-                x: 10, y: 46, width: label.width - 20, height: 14,
-                text: '取整待确认 · 将应用到本织片所有' + (label.result.axis === 'stitches' ? '横向' : '纵向') + '尺寸',
-                fill: '#963c29', fontSize: label.width < 240 ? 10 : 11.5,
-                fontStyle: 'bold', listening: false,
-              }" />
-              <v-group v-for="(roundingDirection, optionIndex) in (['floor', 'ceil'] as const)"
-                :key="roundingDirection" :config="{
-                  x: 7 + optionIndex * ((label.width - 20) / 2 + 6), y: 62,
-                }">
-                <v-rect :config="{
-                  name: dimensionTargetName(label.result, roundingDirection),
-                  width: (label.width - 20) / 2, height: 39,
-                  fill: roundingDirection === 'floor' ? '#f3eee4' : '#e3efeb',
-                  stroke: roundingDirection === 'floor' ? '#c1aa83' : '#7fa597',
-                  strokeWidth: 1, cornerRadius: 6,
-                }" />
-                <v-text :config="{
-                  name: dimensionTargetName(label.result, roundingDirection),
-                  x: 4, y: 4, width: (label.width - 20) / 2 - 8, height: 32,
-                  text: dimensionOptionText(label.result, roundingDirection),
-                  fill: '#263a33', fontSize: label.width < 240 ? 9.5 : 10.5,
-                  lineHeight: 1.25, align: 'center',
-                }" />
-              </v-group>
-            </template>
-            <v-text v-else :config="{
+            <v-text :config="{
               x: 10, y: 46, width: label.width - 20, height: 12,
-              text: label.result.exact ? '精确整数' : '实际 ' + formatCm(label.result.selected!.actualCm) + 'cm · 偏差 ' + formatDeviation(label.result.selected!.deviationCm),
+              text: '整体取整后的尺寸误差 ' + formatDeviation(label.result.selected!.deviationCm),
               fill: label.result.exact ? '#52756b' : '#87592f',
               fontSize: label.width < 240 ? 10 : 11.5, listening: false,
             }" />

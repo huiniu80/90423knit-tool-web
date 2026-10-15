@@ -5,6 +5,7 @@ import { assessGrid } from '../core/gauge/gridConstraints'
 import type { GridAssessment } from '../core/gauge/gridConstraints'
 import {
   createShapeDimensionResults,
+  createOverallDimensionResults,
   selectedShapeCounts,
 } from '../core/dimensions/dimensionConversion'
 import type {
@@ -510,6 +511,7 @@ export const useEditorStore = defineStore('editor', () => {
     if (JSON.stringify(mutationStart.shapes) !== JSON.stringify(shapes.value)) {
       pushUndo(mutationStart)
       shapesRevision.value += 1
+      if (Object.values(shapeRoundingPolicies.value).some((policy) => policy.stitches || policy.rows)) showNotice('轮廓已更新，已保留手动取整方向并重新计算')
     }
     mutationStart = null
   }
@@ -580,8 +582,11 @@ export const useEditorStore = defineStore('editor', () => {
     axis: DimensionAxis,
     direction: RoundingDirection,
   ): void {
-    if (!shapes.value.some((shape) => shape.id === shapeId)) return
+    const shape = shapes.value.find((shape) => shape.id === shapeId)
+    if (!shape) return
     const current = shapeRoundingPolicies.value[shapeId] ?? { stitches: null, rows: null }
+    const result = createOverallDimensionResults(shape, gauge.value, current).find((item) => item.axis === axis)
+    if (!result || result.exact || !result[direction].valid) return
     if (current[axis] === direction) return
     pushUndo(captureHistorySnapshot())
     shapeRoundingPolicies.value = {

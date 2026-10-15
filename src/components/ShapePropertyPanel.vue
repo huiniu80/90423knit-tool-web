@@ -7,10 +7,13 @@ import type { PathMirrorSource } from '../core/geometry/path'
 import { snapCm, tidyPathToGrid } from '../core/geometry/snapping'
 import type { Bounds } from '../core/geometry/shape.types'
 import { useEditorStore } from '../stores/editor'
+import { createOverallDimensionResults, formatCm, formatDeviation } from '../core/dimensions/dimensionConversion'
 
 const store = useEditorStore()
 const { gauge, selectedShape } = storeToRefs(store)
 const bounds = computed(() => selectedShape.value ? getShapeBounds(selectedShape.value) : null)
+const overallDimensions = computed(() => selectedShape.value ? createOverallDimensionResults(selectedShape.value, gauge.value,
+  store.shapeRoundingPolicies[selectedShape.value.id] ?? { stitches: null, rows: null }) : [])
 const mirrorChoiceShapeId = ref<string | null>(null)
 const hasPathSymmetry = computed(() => selectedShape.value?.type === 'path'
   && Boolean(selectedShape.value.editConstraint))
@@ -102,6 +105,23 @@ function confirmPathMirror(source: PathMirrorSource): void {
         <label><span>Y 位置</span><div class="input-unit"><input :value="bounds.y.toFixed(2)" type="number" step="0.5" @change="updateBound('y', $event)" /><b>cm</b></div></label>
         <label><span>宽度</span><div class="input-unit"><input :value="bounds.width.toFixed(2)" type="number" min="0.5" step="0.5" @change="updateBound('width', $event)" /><b>cm</b></div></label>
         <label><span>高度</span><div class="input-unit"><input :value="bounds.height.toFixed(2)" type="number" min="0.5" step="0.5" @change="updateBound('height', $event)" /><b>cm</b></div></label>
+      </div>
+      <div v-if="overallDimensions.length" class="overall-dimensions" aria-label="织片整体取整">
+        <b>织片整体取整</b>
+        <p>按原轮廓换算，缝合补偿尚未加入。</p>
+        <div v-for="result in overallDimensions" :key="result.id" class="overall-dimension">
+          <strong>{{ result.axis === 'stitches' ? '整体总宽' : '整体总高' }} {{ formatCm(result.targetCm) }} cm</strong>
+          <span>{{ result.selected!.count }} {{ result.axis === 'stitches' ? '针' : '行' }} · 实际 {{ formatCm(result.selected!.actualCm) }} cm · 误差 {{ formatDeviation(result.selected!.deviationCm) }}</span>
+          <small v-if="!result.floor.valid">目标小于当前密度下的一{{ result.axis === 'stitches' ? '针' : '行' }}，已采用最低有效值。</small>
+          <div v-if="!result.exact" class="rounding-options">
+            <button v-for="direction in (['floor', 'ceil'] as const).filter(item => result[item].valid)" :key="direction" type="button"
+              :class="{ active: result.selected!.direction === direction }"
+              @click="store.setShapeRoundingDirection(result.shapeId, result.axis, direction)">
+              {{ direction === 'floor' ? '向下取整' : '向上取整' }}：{{ result[direction].count }} {{ result.axis === 'stitches' ? '针' : '行' }}<br>
+              实际尺寸{{ result[direction].deviationCm < 0 ? '减少' : '增加' }} {{ formatCm(Math.abs(result[direction].deviationCm)) }} cm
+            </button>
+          </div>
+        </div>
       </div>
       <p v-if="selectedShape.type === 'polygon'" class="property-tip">双击轮廓边添加节点；选中节点后按 Delete 删除。
       </p>

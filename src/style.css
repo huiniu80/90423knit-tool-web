@@ -488,6 +488,13 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .editor-notice { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); max-width: calc(100vw - 32px); padding: 12px 18px; margin: 0; z-index: 60; color: #fff; background: #263b34; border-radius: 10px; font-size: 14px; pointer-events: none; }
 .calculation-message { margin: 0; padding: 10px 16px; background: #fff3dd; color: #7d4519; font-size: 14px; flex: 0 0 auto; }
 .calculation-message p { margin: 4px 0; }
+.overall-dimensions { margin-top: 16px; color: var(--forest); font-size: 13px; }
+.overall-dimensions p { font-size: 12px; line-height: 1.5; }
+.overall-dimension { display: grid; gap: 7px; margin-top: 12px; }
+.overall-dimension span, .overall-dimension small { font-size: 12px; line-height: 1.5; }
+.rounding-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.rounding-options button { min-width: 44px; min-height: 44px; flex: 1 1 100px; padding: 8px; border: 1px solid #bcc6bf; border-radius: 8px; background: #fffdf8; color: var(--forest); font-size: 12px; line-height: 1.5; }
+.rounding-options button.active { border-color: #4d8b7c; background: #e3efeb; }
 
 .zoom-control button, .zoom-control .fit-button { min-width: 44px; height: 44px; }
 .zoom-control span { width: 76px; }

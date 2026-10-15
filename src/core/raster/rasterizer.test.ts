@@ -13,6 +13,13 @@ const gauge = calculateGauge({
 const canvas: FabricCanvas = { widthCm: 30, heightCm: 30 }
 
 describe('Rasterizer', () => {
+  it('边界恰好通过针格中心时，整数总宽高不会重复计入另一端', () => {
+    const shape: Shape = { id: 'aligned', type: 'rectangle', x: 2.5, y: 0.3, widthCm: 3, heightCm: 3 }
+    const active = rasterize(shape, gauge, canvas, { mode: 'center', symmetryOptimization: false },
+      { stitches: 3, rows: 5, direction: 'bottom-up' }).filter(row => row.stitchCount > 0)
+    expect(active).toHaveLength(5)
+    expect(active.every(row => row.stitchCount === 3)).toBe(true)
+  })
   it('旧策略参数不能改变当前中心针格结果', () => {
     const shape: Shape = { id: 'r', type: 'rectangle', x: 0.2, y: 0, widthCm: 2.1, heightCm: 3 }
     const center = rasterize(shape, gauge, canvas, { mode: 'center', symmetryOptimization: false })

@@ -3,6 +3,26 @@ import { calculateGauge } from '../gauge/gauge'
 import { convertDimension, createShapeDimensionResults, formatCm, selectedShapeCounts } from './dimensionConversion'
 
 describe('dimension conversion', () => {
+  it('半值向上、零候选排除且手动方向不绕过最低有效值', () => {
+    expect(convertDimension('p', -1, 'rows', 2.5, 1, null, { x: 0, y: 0 }).selected?.count).toBe(3)
+    const tiny = convertDimension('p', -1, 'stitches', 0.2, 1, 'floor', { x: 0, y: 0 })
+    expect(tiny.floor.valid).toBe(false)
+    expect(tiny.selected?.count).toBe(1)
+    expect(convertDimension('p', -1, 'rows', 2.2, 1, 'ceil', { x: 0, y: 0 }).selected?.count).toBe(3)
+  })
+  it('局部跨度直接读取整体派生轮廓，不分别取整且原轮廓不变', () => {
+    const gauge = calculateGauge({ sampleStitches: 10, sampleRows: 10, sampleWidthCm: 10, sampleHeightCm: 10 })
+    const shape = { id: 'p', type: 'path' as const, closed: true, nodes: [
+      { anchor: { x: 1, y: 1 } }, { anchor: { x: 3.2, y: 1 } }, { anchor: { x: 4.4, y: 4.4 } }, { anchor: { x: 1, y: 4.4 } },
+    ] }
+    const original = JSON.stringify(shape)
+    const results = createShapeDimensionResults(shape, gauge, { stitches: null, rows: null })
+    const local = results.find((item) => item.segmentIndex === 0 && item.axis === 'stitches')!
+    expect(local.selected!.actualCm).toBeCloseTo(2.2 * 3 / 3.4)
+    expect(local.selected!.count).not.toBe(Math.round(local.selected!.count))
+    expect(selectedShapeCounts(shape, gauge, { stitches: null, rows: null })).toEqual({ stitches: 3, rows: 3 })
+    expect(JSON.stringify(shape)).toBe(original)
+  })
   it('同时给出 19cm 在 2.8行/cm 下的上下取整及偏差', () => {
     const result = convertDimension('piece', 0, 'rows', 19, 2.8, null, { x: 0, y: 0 })
     expect(result.rawCount).toBeCloseTo(53.2)
@@ -10,7 +30,8 @@ describe('dimension conversion', () => {
     expect(result.floor.deviationCm).toBeCloseTo(-0.071428)
     expect(result.ceil.count).toBe(54)
     expect(result.ceil.deviationCm).toBeCloseTo(0.285714)
-    expect(result.confirmed).toBe(false)
+    expect(result.confirmed).toBe(true)
+    expect(result.selected?.count).toBe(53)
   })
 
   it('整数结果无需确认并去除厘米末尾零', () => {

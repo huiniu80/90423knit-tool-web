@@ -140,12 +140,13 @@ export function describeBoundarySegmentShaping(
   canvas: FabricCanvas,
   rasterOptions: RasterOptions,
   outlineCenterX: number,
+  calculated?: { rows: readonly RasterRow[]; instructions: ReturnType<typeof generateInstructions> },
 ): SegmentShapingDescription {
   const issue = shapeCalculationIssue(segment.sourceShape, canvas)
   if (issue) return { boundarySide: 'both', lines: [shapeIssueMessage[issue]], markers: [] }
 
-  const rows = rasterize(segment.sourceShape, gauge, canvas, rasterOptions)
-  const instructions = generateInstructions(rows, 'bottom-up')
+  const rows = calculated?.rows ?? rasterize(segment.sourceShape, gauge, canvas, rasterOptions)
+  const instructions = calculated?.instructions ?? generateInstructions([...rows], 'bottom-up')
   const activeRows = rows.filter((row) => row.stitchCount > 0)
   if (!activeRows.length) return { boundarySide: 'both', lines: ['未落入针格'], markers: [] }
   if (!instructions.length) return { boundarySide: 'both', lines: ['不支持的复杂断开结构，请修改轮廓'], markers: [] }

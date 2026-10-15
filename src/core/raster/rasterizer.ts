@@ -18,7 +18,7 @@ function intervalToSegment(
 ): StitchSegment {
   return {
     startStitch: Math.ceil(interval.startX / stitchWidthCm - 0.5 - EPSILON),
-    endStitch: Math.floor(interval.endX / stitchWidthCm - 0.5 + EPSILON),
+    endStitch: Math.ceil(interval.endX / stitchWidthCm - 0.5 - EPSILON) - 1,
   }
 }
 
@@ -71,8 +71,10 @@ function rasterizeFilledShape(
   canvas: FabricCanvas,
 ): RasterRow[] {
   const { columnCount, rowCount } = calculateFabricGrid(canvas, gauge)
+  const bounds = getShapeBounds(shape)
   const segmentsByRow = Array.from({ length: rowCount }, (_, rowIndex) => {
     const yCm = (rowIndex + 0.5) * gauge.rowHeightCm
+    if (yCm >= bounds.y + bounds.height - EPSILON) return []
     return mergeAndClipSegments(
       getHorizontalIntervals(shape, yCm).map((interval) =>
         intervalToSegment(interval, gauge.stitchWidthCm),

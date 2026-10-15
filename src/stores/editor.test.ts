@@ -29,6 +29,28 @@ function stubBrowser(storage: MemoryStorage): void {
 }
 
 describe('Editor Store', () => {
+  it('自动最近整数与手工覆盖保存一致，上游重算保留方向且拒绝零候选', async () => {
+    vi.useFakeTimers()
+    const storage = new MemoryStorage()
+    stubBrowser(storage)
+    const store = useEditorStore()
+    store.addShape({ id: 'r', type: 'rectangle', x: 2, y: 2, widthCm: 3.2, heightCm: 3.2 })
+    store.setGaugeInputValue('sampleHeightCm', 10)
+    expect(store.selectedShapePlan?.instructions).toHaveLength(3)
+    store.setShapeRoundingDirection('r', 'rows', 'ceil')
+    expect(store.selectedShapePlan?.instructions).toHaveLength(4)
+    store.replaceShape({ id: 'r', type: 'rectangle', x: 2, y: 2, widthCm: 3.2, heightCm: 4.2 })
+    expect(store.shapeRoundingPolicies.r?.rows).toBe('ceil')
+    expect(store.selectedShapePlan?.instructions).toHaveLength(5)
+    expect(store.notice).toContain('已保留手动取整方向')
+    store.addShape({ id: 'tiny', type: 'rectangle', x: 2, y: 2, widthCm: 0.2, heightCm: 0.2 })
+    store.setShapeRoundingDirection('tiny', 'rows', 'floor')
+    expect(store.shapeRoundingPolicies.tiny).toBeUndefined()
+    await nextTick()
+    vi.advanceTimersByTime(300)
+    expect(JSON.parse(storage.getItem(PROJECT_LIBRARY_STORAGE_KEY)!).projects[0].document.shapeRoundingPolicies.r.rows).toBe('ceil')
+    store.$dispose()
+  })
   it('同尺寸与同一方案成功打开均重置路径工具，失败和自动保存不重置会话', async () => {
     vi.useFakeTimers()
     const storage = new MemoryStorage()
@@ -661,7 +683,7 @@ describe('Editor Store', () => {
     store.setGaugeInputValue('sampleRows', 28)
     store.setGaugeInputValue('sampleHeightCm', 10)
 
-    expect(store.selectedShapePlan?.roundingPending).toBe(true)
+    expect(store.selectedShapePlan?.roundingPending).toBe(false)
     store.setShapeRoundingDirection('rounding-piece', 'stitches', 'floor')
     store.setShapeRoundingDirection('rounding-piece', 'rows', 'ceil')
     const plan = store.selectedShapePlan!
