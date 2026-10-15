@@ -371,7 +371,7 @@ export const useEditorStore = defineStore('editor', () => {
       savedAt: new Date().toISOString(),
       gaugeInput: clonePlain(gaugeInput.value),
       fabric: clonePlain(fabric.value),
-      shapes: cloneShapes(shapes.value),
+      shapes: cloneShapes(mutationStart?.shapes ?? shapes.value),
       shapeDirections: validDirections,
       shapeRoundingPolicies: validRoundingPolicies,
       rasterOptions: clonePlain(rasterOptions.value),
@@ -509,6 +509,12 @@ export const useEditorStore = defineStore('editor', () => {
       pushUndo(mutationStart)
       shapesRevision.value += 1
     }
+    mutationStart = null
+  }
+
+  function cancelShapeMutation(): void {
+    if (!mutationStart) return
+    shapes.value = clonePlain(mutationStart.shapes)
     mutationStart = null
   }
 
@@ -1023,6 +1029,7 @@ export const useEditorStore = defineStore('editor', () => {
     beginShapeMutation,
     updateShapeLive,
     commitShapeMutation,
+    cancelShapeMutation,
     replaceShape,
     setGaugeInputValue,
     setFabricValue,

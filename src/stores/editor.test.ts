@@ -29,6 +29,35 @@ function stubBrowser(storage: MemoryStorage): void {
 }
 
 describe('Editor Store', () => {
+  it('指针取消恢复整次拖动源数据，不写撤销或保存中间状态', async () => {
+    vi.useFakeTimers()
+    const storage = new MemoryStorage()
+    stubBrowser(storage)
+    const store = useEditorStore()
+    store.addDefaultShape('rectangle')
+    await nextTick()
+    vi.advanceTimersByTime(300)
+    const original = JSON.stringify(store.shapes)
+    store.beginShapeMutation()
+    const shape = store.selectedShape!
+    if (shape.type !== 'rectangle') throw new Error('fixture type')
+    store.updateShapeLive({ ...shape, x: 10 })
+    store.updateShapeLive({ ...shape, x: 20 })
+    // A selection change can schedule a save while a drag is still in progress.
+    store.selectedShapeId = null
+    await nextTick()
+    vi.advanceTimersByTime(300)
+    expect(JSON.stringify(JSON.parse(storage.getItem(PROJECT_LIBRARY_STORAGE_KEY)!).projects[0].document.shapes)).toBe(original)
+    store.cancelShapeMutation()
+    store.commitShapeMutation()
+    expect(JSON.stringify(store.shapes)).toBe(original)
+    await nextTick()
+    vi.advanceTimersByTime(300)
+    expect(JSON.parse(storage.getItem(PROJECT_LIBRARY_STORAGE_KEY)!).projects[0].document.shapes).toEqual(store.shapes)
+    store.undo()
+    expect(store.shapes).toEqual([])
+    store.$dispose()
+  })
   it('复杂三段保留针格但整片不生成计划及编织导出', () => {
     const store = useEditorStore()
     store.addPath([{ anchor: { x: 2, y: 1 } }, { anchor: { x: 12, y: 1 } },

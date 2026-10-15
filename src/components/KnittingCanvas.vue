@@ -29,8 +29,6 @@ import {
   mirroredPathSegmentIndex,
   pathConstraintSymmetry,
   pathSegmentCount,
-  removePathNodeWithSymmetry,
-  splitPathSegmentWithSymmetry,
 } from '../core/geometry/path'
 import type { PathSymmetry } from '../core/geometry/path'
 import { snapCm, snapPoint, snapPointToGrid } from '../core/geometry/snapping'
@@ -51,6 +49,8 @@ import { createCanvasExportLayout } from './canvasExportLayout'
 import { mergeRasterRows } from '../core/raster/rasterizer'
 import { layoutMarkersGlobally } from './markerLayout'
 import type { LineObstacle } from './markerLayout'
+import { deleteEditableNode, insertEdgeNode, nearestEditableEdge } from './nodeEditing'
+import type { SelectedEdge } from './nodeEditing'
 
 type Corner = 'nw' | 'ne' | 'se' | 'sw'
 type Interaction =
@@ -158,6 +158,8 @@ const interaction = ref<Interaction | null>(null)
 const pathPointer = ref<Point | null>(null)
 const selectedPointIndex = ref<number | null>(null)
 const selectedPathNodeIndex = ref<number | null>(null)
+const selectedEdge = ref<SelectedEdge | null>(null)
+const freeDirection = ref(false)
 const selectedGridAnnotationSegment = ref<{ shapeId: string; segmentIndex: number } | null>(null)
 const highlightedAnnotationKey = ref<string | null>(null)
 const expandedAnnotationKey = ref<string | null>(null)
@@ -173,6 +175,11 @@ let resizeObserver: ResizeObserver | null = null
 let initializationFrameId: number | null = null
 let initializationScheduled = false
 let activePenPointerId: number | null = null
+let contentPointerId: number | null = null
+let pointerStart: Point | null = null
+let pointerMoved = false
+let viewOnlyTouches = false
+let pendingControlName = ''
 let touchGesture: TouchGesture | null = null
 const touchPointers = new Map<number, Point>()
 let interactionFrameId: number | null = null
@@ -984,8 +991,8 @@ const pathSnapPreview = computed(() => {
 })
 
 function pointerFromEvent(event: KonvaEventObject<PointerEvent | WheelEvent>): Point | null {
-  const position = event.target.getStage()?.getPointerPosition()
-  return position ? { x: position.x, y: position.y } : null
+  const rect = event.target.getStage()?.container().getBoundingClientRect()
+  return rect ? { x: event.evt.clientX - rect.left, y: event.evt.clientY - rect.top } : null
 }
 
 function worldFromScreen(screen: Point, clampToFabric = false): Point {
@@ -1094,7 +1101,7 @@ function touchCenter(first: Point, second: Point): Point {
 }
 
 function beginTouchGesture(): void {
-  flushInteractionMove()
+  cancelInteraction()
   const points = firstTwoTouchPoints()
   if (!points) return
   const [first, second] = points
@@ -1105,6 +1112,7 @@ function beginTouchGesture(): void {
     startPan: { ...pan.value },
   }
   interaction.value = null
+  viewOnlyTouches = true
 }
 
 function updateTouchGesture(): void {
@@ -1127,17 +1135,42 @@ function updateTouchGesture(): void {
 }
 
 function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
-  host.value?.focus()
   const pointer = pointerFromEvent(event)
   if (!pointer) return
+  if (event.evt.pointerType === 'touch') {
+    if (activePenPointerId !== null) return
+    event.evt.preventDefault()
+    const touchTarget = event.evt.target
+    if (touchTarget instanceof Element && 'setPointerCapture' in touchTarget) {
+      try { touchTarget.setPointerCapture(event.evt.pointerId) } catch { /* The browser may have cancelled this pointer. */ }
+    }
+    touchPointers.set(event.evt.pointerId, pointer)
+    if (touchPointers.size >= 2) { beginTouchGesture(); return }
+    if (viewOnlyTouches) return
+  } else if (event.evt.pointerType === 'pen') {
+    if (activePenPointerId !== null) return
+    cancelInteraction()
+    touchGesture = null
+    if (touchPointers.size) viewOnlyTouches = true
+    activePenPointerId = event.evt.pointerId
+  }
+  if (contentPointerId !== null) return
+  if (event.evt.pointerType === 'mouse' && event.evt.button !== 0 && event.evt.button !== 1) return
+  host.value?.focus({ preventScroll: true })
+  contentPointerId = event.evt.pointerId
+  pointerStart = pointer
+  pointerMoved = false
+  pendingControlName = ''
+  const nativeTarget = event.evt.target
+  if (nativeTarget instanceof Element && 'setPointerCapture' in nativeTarget) {
+    try { nativeTarget.setPointerCapture(event.evt.pointerId) } catch { /* Detached pointers are cancelled below. */ }
+  }
   const name = targetName(event)
   const annotationReset = annotationControlTarget(name, 'outline-reset:')
   if (annotationReset) {
     event.evt.preventDefault()
     suppressNextStageClick = true
-    const next = { ...pinnedAnnotationPositions.value }
-    delete next[annotationReset.key]
-    pinnedAnnotationPositions.value = next
+    pendingControlName = name
     return
   }
   const annotationDrag = annotationControlTarget(name, 'outline-drag:')
@@ -1165,26 +1198,9 @@ function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
   if (dimensionTarget) {
     event.evt.preventDefault()
     suppressNextStageClick = true
-    store.setShapeRoundingDirection(
-      dimensionTarget.shapeId,
-      dimensionTarget.axis,
-      dimensionTarget.direction,
-    )
+    pendingControlName = name
     return
   }
-
-  if (event.evt.pointerType === 'touch') {
-    if (activePenPointerId !== null) return
-    event.evt.preventDefault()
-    touchPointers.set(event.evt.pointerId, pointer)
-    if (touchPointers.size >= 2) {
-      beginTouchGesture()
-    } else {
-      interaction.value = { kind: 'pan', start: pointer, origin: { ...pan.value } }
-    }
-    return
-  }
-  if (event.evt.pointerType === 'pen') activePenPointerId = event.evt.pointerId
 
   const isPrimaryCanvasDrag = event.evt.button === 0
     && isCanvasBackground(name)
@@ -1195,6 +1211,7 @@ function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
       if (viewMode.value === 'grid') selectedGridAnnotationSegment.value = null
       selectedPointIndex.value = null
       selectedPathNodeIndex.value = null
+      selectedEdge.value = null
     }
     interaction.value = { kind: 'pan', start: pointer, origin: { ...pan.value } }
     return
@@ -1235,6 +1252,7 @@ function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
     const nodeIndex = Number(name.split(':')[1])
     const shape = clonePlain(selectedShape.value)
     selectedPathNodeIndex.value = nodeIndex
+    selectedEdge.value = null
     selectedPointIndex.value = null
     store.beginShapeMutation()
     interaction.value = {
@@ -1250,6 +1268,7 @@ function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
     const nodeIndex = Number(nodeIndexText)
     const shape = clonePlain(selectedShape.value)
     selectedPathNodeIndex.value = nodeIndex
+    selectedEdge.value = null
     selectedPointIndex.value = null
     store.beginShapeMutation()
     interaction.value = {
@@ -1265,6 +1284,7 @@ function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
     const segmentIndex = Number(name.split(':')[1])
     const shape = clonePlain(selectedShape.value)
     selectedPathNodeIndex.value = null
+    selectedEdge.value = nearestEditableEdge(shape, worldFromScreen(pointer))
     selectedPointIndex.value = null
     store.beginShapeMutation()
     interaction.value = {
@@ -1278,6 +1298,7 @@ function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
   if (name.startsWith('point:') && selectedShape.value?.type === 'polygon') {
     const pointIndex = Number(name.split(':')[2])
     selectedPointIndex.value = pointIndex
+    selectedEdge.value = null
     selectedPathNodeIndex.value = null
     store.beginShapeMutation()
     interaction.value = {
@@ -1296,12 +1317,16 @@ function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
     selectedShapeId.value = id
     selectedPointIndex.value = null
     selectedPathNodeIndex.value = null
+    const shape = shapes.value.find((item) => item.id === id)
+    selectedEdge.value = shape?.type === 'path' || shape?.type === 'polygon'
+      ? nearestEditableEdge(shape, worldFromScreen(pointer)) : null
     return
   }
   selectedShapeId.value = null
   if (viewMode.value === 'grid') selectedGridAnnotationSegment.value = null
   selectedPointIndex.value = null
   selectedPathNodeIndex.value = null
+  selectedEdge.value = null
 }
 
 function applyInteractionMove(pointer: Point, directionSnap = true): void {
@@ -1431,12 +1456,8 @@ function scheduleInteractionMove(pointer: Point, directionSnap = true): void {
 function onPointerMove(event: KonvaEventObject<PointerEvent>): void {
   const pointer = pointerFromEvent(event)
   if (!pointer) return
-  if (event.evt.pointerType === 'touch' && interaction.value?.kind === 'annotation-drag') {
-    event.evt.preventDefault()
-    scheduleInteractionMove(pointer, !event.evt.altKey)
-    return
-  }
   if (event.evt.pointerType === 'touch') {
+    if (activePenPointerId !== null) return
     if (!touchPointers.has(event.evt.pointerId)) return
     event.evt.preventDefault()
     touchPointers.set(event.evt.pointerId, pointer)
@@ -1444,7 +1465,10 @@ function onPointerMove(event: KonvaEventObject<PointerEvent>): void {
       updateTouchGesture()
       return
     }
+    if (viewOnlyTouches) return
   }
+  if (contentPointerId !== null && contentPointerId !== event.evt.pointerId) return
+  if (pointerStart && Math.hypot(pointer.x - pointerStart.x, pointer.y - pointerStart.y) > 5) pointerMoved = true
   const name = targetName(event)
   const annotationTarget = annotationCardTarget(name)
   const annotationDrag = annotationControlTarget(name, 'outline-drag:')
@@ -1459,12 +1483,34 @@ function onPointerMove(event: KonvaEventObject<PointerEvent>): void {
   if (activeTool.value === 'path') {
     const rawPathPointer = worldFromScreen(pointer, true)
     const previous = draftPathNodes.value.at(-1)?.anchor
-    pathPointer.value = applyPointSnap(rawPathPointer, previous ? [previous] : [], !event.evt.altKey)
+    pathPointer.value = applyPointSnap(rawPathPointer, previous ? [previous] : [], !event.evt.altKey && !freeDirection.value)
   } else {
     pathPointer.value = null
     if (!interaction.value) snapGuide.value = null
   }
-  if (interaction.value) scheduleInteractionMove(pointer, !event.evt.altKey)
+  if (interaction.value && pointerMoved) scheduleInteractionMove(pointer, !event.evt.altKey && !freeDirection.value)
+}
+
+function cancelInteraction(): void {
+  if (interactionFrameId !== null) cancelAnimationFrame(interactionFrameId)
+  interactionFrameId = null
+  pendingInteractionPointer = null
+  store.cancelShapeMutation()
+  interaction.value = null
+  contentPointerId = null
+  activePenPointerId = null
+  pointerStart = null
+  pointerMoved = false
+  pendingControlName = ''
+  suppressNextStageClick = false
+  snapGuide.value = null
+}
+
+function onLostPointerCapture(event: PointerEvent): void {
+  if (contentPointerId === event.pointerId) cancelInteraction()
+  touchPointers.delete(event.pointerId)
+  if (touchPointers.size < 2) touchGesture = null
+  if (!touchPointers.size) viewOnlyTouches = false
 }
 
 function endInteraction(): void {
@@ -1479,28 +1525,36 @@ function endInteraction(): void {
 }
 
 function onPointerEnd(event: KonvaEventObject<PointerEvent>): void {
-  if (event.evt.pointerType === 'pen' && event.evt.pointerId === activePenPointerId) {
-    activePenPointerId = null
-  }
-  if (event.evt.pointerType !== 'touch') {
-    endInteraction()
-    return
-  }
-
-  touchPointers.delete(event.evt.pointerId)
-  if (touchGesture) {
-    touchGesture = null
-    if (touchPointers.size >= 2) {
-      beginTouchGesture()
-    } else {
-      const remaining = touchPointers.values().next().value as Point | undefined
-      interaction.value = remaining
-        ? { kind: 'pan', start: remaining, origin: { ...pan.value } }
-        : null
+  if (event.evt.pointerType === 'touch') {
+    touchPointers.delete(event.evt.pointerId)
+    if (touchGesture || viewOnlyTouches) {
+      touchGesture = null
+      if (touchPointers.size >= 2 && activePenPointerId === null) beginTouchGesture()
+      if (!touchPointers.size) viewOnlyTouches = false
+      return
     }
-    return
   }
+  if (contentPointerId !== event.evt.pointerId) return
+  if (event.evt.pointerType === 'pen') activePenPointerId = null
+  const cancelled = event.evt.type === 'pointercancel' || event.evt.type === 'lostpointercapture'
+  if (cancelled) { cancelInteraction(); return }
+  const control = pendingControlName
+  const tapped = !pointerMoved
   endInteraction()
+  contentPointerId = null
+  pointerStart = null
+  pendingControlName = ''
+  if (tapped) {
+    const reset = annotationControlTarget(control, 'outline-reset:')
+    const dimension = dimensionButtonTarget(control)
+    if (reset) {
+      const next = { ...pinnedAnnotationPositions.value }
+      delete next[reset.key]
+      pinnedAnnotationPositions.value = next
+    } else if (dimension) store.setShapeRoundingDirection(dimension.shapeId, dimension.axis, dimension.direction)
+    else if (!suppressNextStageClick) onStagePointerClick(event)
+  }
+  suppressNextStageClick = false
 }
 
 function onPointerLeave(event: KonvaEventObject<PointerEvent>): void {
@@ -1509,7 +1563,7 @@ function onPointerLeave(event: KonvaEventObject<PointerEvent>): void {
   annotationDragHovered.value = false
   canvasBackgroundHovered.value = false
   highlightedAnnotationKey.value = null
-  onPointerEnd(event)
+  if (!event.evt.buttons && contentPointerId === event.evt.pointerId) cancelInteraction()
 }
 
 function onStagePointerClick(event: KonvaEventObject<PointerEvent>): void {
@@ -1517,7 +1571,6 @@ function onStagePointerClick(event: KonvaEventObject<PointerEvent>): void {
     suppressNextStageClick = false
     return
   }
-  if (event.evt.pointerType === 'touch') return
   if (annotationCardTarget(targetName(event)) || dimensionButtonTarget(targetName(event))) return
   if (activeTool.value !== 'polygon' && activeTool.value !== 'path') return
   const pointer = pointerFromEvent(event)
@@ -1543,14 +1596,14 @@ function onStagePointerClick(event: KonvaEventObject<PointerEvent>): void {
     const point = endpointSnap?.point ?? applyPointSnap(
       rawPoint,
       previous ? [previous] : [],
-      !event.evt.altKey,
+      !event.evt.altKey && !freeDirection.value,
     )
     store.addDraftPathNode({ anchor: point })
     return
   }
 
   const previous = draftPoints.value.at(-1)
-  const point = applyPointSnap(rawPoint, previous ? [previous] : [], !event.evt.altKey)
+  const point = applyPointSnap(rawPoint, previous ? [previous] : [], !event.evt.altKey && !freeDirection.value)
   const first = draftPoints.value[0]
 
   if (
@@ -1575,26 +1628,33 @@ function finishPath(closed: boolean): void {
   store.finishPathDraft(closed)
 }
 
-function nearestEdgeInsertion(shape: PolygonShape, point: Point): number {
-  let bestIndex = 0
-  let bestDistance = Number.POSITIVE_INFINITY
-  shape.points.forEach((start, index) => {
-    const end = shape.points[(index + 1) % shape.points.length]
-    if (!end) return
-    const dx = end.x - start.x
-    const dy = end.y - start.y
-    const lengthSquared = dx * dx + dy * dy
-    const t = lengthSquared === 0
-      ? 0
-      : Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared))
-    const projection = { x: start.x + t * dx, y: start.y + t * dy }
-    const distance = Math.hypot(point.x - projection.x, point.y - projection.y)
-    if (distance < bestDistance) {
-      bestDistance = distance
-      bestIndex = index + 1
-    }
-  })
-  return bestIndex
+const selectedNodeIndex = computed(() => selectedShape.value?.type === 'path' ? selectedPathNodeIndex.value : selectedPointIndex.value)
+const canDeleteNode = computed(() => {
+  const shape = selectedShape.value
+  const index = selectedNodeIndex.value
+  if (index === null || (shape?.type !== 'path' && shape?.type !== 'polygon')) return false
+  return deleteEditableNode(shape, index) !== shape
+})
+function insertSelectedNode(): void {
+  const shape = selectedShape.value
+  if (!selectedEdge.value || (shape?.type !== 'path' && shape?.type !== 'polygon')) return
+  const result = insertEdgeNode(shape, selectedEdge.value)
+  if (result.index < 0) return
+  store.replaceShape(result.shape)
+  selectedEdge.value = null
+  if (shape.type === 'path') selectedPathNodeIndex.value = result.index
+  else selectedPointIndex.value = result.index
+}
+function deleteSelectedNode(): void {
+  const shape = selectedShape.value
+  const index = selectedNodeIndex.value
+  if (index === null || (shape?.type !== 'path' && shape?.type !== 'polygon')) return
+  const next = deleteEditableNode(shape, index)
+  if (next === shape) { store.showNotice('节点数量已达下限，请使用整图删除移除轮廓。'); return }
+  store.replaceShape(next)
+  selectedPointIndex.value = null
+  selectedPathNodeIndex.value = null
+  selectedEdge.value = null
 }
 
 function onPointerDoubleClick(event: KonvaEventObject<PointerEvent>): void {
@@ -1610,30 +1670,14 @@ function onPointerDoubleClick(event: KonvaEventObject<PointerEvent>): void {
     const nearest = name.startsWith('path-midpoint:')
       ? { segmentIndex: Number(name.split(':')[1]), t: 0.5 }
       : findNearestPathPosition(selectedShape.value, world)
-    const symmetry = pathConstraintSymmetry(selectedShape.value)
-    const result = splitPathSegmentWithSymmetry(
-      selectedShape.value,
-      nearest.segmentIndex,
-      nearest.t,
-      symmetry,
-    )
-    if (result.insertedIndex !== -1) {
-      store.replaceShape(result.path)
-      selectedPathNodeIndex.value = result.insertedIndex
-    }
+    selectedEdge.value = { shapeId: selectedShape.value.id, ...nearest, point: evaluatePathSegment(selectedShape.value, nearest.segmentIndex, nearest.t) }
+    insertSelectedNode()
     return
   }
   if (selectedShape.value.type !== 'polygon') return
   if (!name.startsWith('shape:')) return
-  const shape = clonePlain(selectedShape.value)
-  const insertion = nearestEdgeInsertion(shape, world)
-  const references = [
-    shape.points[(insertion - 1 + shape.points.length) % shape.points.length]!,
-    shape.points[insertion % shape.points.length]!,
-  ]
-  shape.points.splice(insertion, 0, applyPointSnap(world, references, !event.evt.altKey))
-  store.replaceShape(shape)
-  selectedPointIndex.value = insertion
+  selectedEdge.value = nearestEditableEdge(selectedShape.value, world)
+  insertSelectedNode()
 }
 
 function onWheel(event: KonvaEventObject<WheelEvent>): void {
@@ -1658,7 +1702,7 @@ function onKeyDown(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
     event.preventDefault()
     store.cancelDrawing()
-    interaction.value = null
+    cancelInteraction()
     if (activeTool.value === 'polygon' || activeTool.value === 'path') activeTool.value = 'select'
     return
   }
@@ -1674,32 +1718,8 @@ function onKeyDown(event: KeyboardEvent): void {
   }
   if ((event.key === 'Delete' || event.key === 'Backspace') && selectedShape.value) {
     event.preventDefault()
-    if (selectedShape.value.type === 'path' && selectedPathNodeIndex.value !== null) {
-      const minimum = selectedShape.value.closed ? 3 : 2
-      if (selectedShape.value.nodes.length - 1 < minimum) {
-        store.deleteSelected()
-      } else {
-        const shape = clonePlain(selectedShape.value)
-        const symmetry = pathConstraintSymmetry(shape)
-        store.replaceShape(removePathNodeWithSymmetry(
-          shape,
-          selectedPathNodeIndex.value,
-          symmetry,
-        ))
-      }
-      selectedPathNodeIndex.value = null
-    } else if (
-      selectedShape.value.type === 'polygon' &&
-      selectedPointIndex.value !== null &&
-      selectedShape.value.points.length > 3
-    ) {
-      const shape = clonePlain(selectedShape.value)
-      shape.points.splice(selectedPointIndex.value, 1)
-      store.replaceShape(shape)
-      selectedPointIndex.value = null
-    } else {
-      store.deleteSelected()
-    }
+    if (selectedNodeIndex.value !== null) deleteSelectedNode()
+    else store.deleteSelected()
   }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
     event.preventDefault()
@@ -1856,6 +1876,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  cancelInteraction()
   if (initializationFrameId !== null) cancelAnimationFrame(initializationFrameId)
   if (interactionFrameId !== null) cancelAnimationFrame(interactionFrameId)
   interactionFrameId = null
@@ -1866,12 +1887,15 @@ onBeforeUnmount(() => {
 watch(() => [fabric.value.widthCm, fabric.value.heightCm], () => nextTick(fitCanvas))
 watch(zoom, () => nextTick(() => (pan.value = clampPan(pan.value))))
 watch(activeTool, (tool) => {
+  cancelInteraction()
+  selectedEdge.value = null
   if (draftTool.value && tool !== draftTool.value) store.cancelDrawing()
   if (tool !== 'path') pathPointer.value = null
 })
 watch(selectedShapeId, () => {
   selectedPointIndex.value = null
   selectedPathNodeIndex.value = null
+  if (selectedEdge.value?.shapeId !== selectedShapeId.value) selectedEdge.value = null
 })
 watch(viewMode, (mode, previousMode) => {
   if (mode === 'grid' && previousMode !== 'grid') selectedGridAnnotationSegment.value = null
@@ -1888,12 +1912,13 @@ defineExpose({ fitCanvas, exportCanvas })
 </script>
 
 <template>
-  <div ref="host" class="knitting-canvas" tabindex="0" :style="{ cursor: stageCursor }">
+  <div ref="host" class="knitting-canvas" tabindex="0" :style="{ cursor: stageCursor }"
+    @lostpointercapture="onLostPointerCapture">
     <div :class="['canvas-stage', { 'canvas-stage--initializing': !canvasReady }]">
       <v-stage ref="stageRef" :config="{ width: stageSize.width, height: stageSize.height }"
         @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerEnd"
         @pointercancel="onPointerEnd" @pointerleave="onPointerLeave"
-        @pointerclick="onStagePointerClick" @pointerdblclick="onPointerDoubleClick" @wheel="onWheel">
+        @pointerdblclick="onPointerDoubleClick" @wheel="onWheel">
       <v-layer>
         <v-group :config="{ x: pan.x, y: pan.y }">
           <v-rect :config="{
@@ -1928,7 +1953,7 @@ defineExpose({ fitCanvas, exportCanvas })
             <v-rect :config="{ ...selectionRect, stroke: '#287d72', strokeWidth: 1.3, dash: [5, 4], listening: false }" />
             <v-circle v-for="handle in resizeHandles" :key="handle.corner" :config="{
               name: `resize:${handle.corner}`, x: handle.x, y: handle.y, radius: 5,
-              fill: '#fffdf8', stroke: '#287d72', strokeWidth: 2,
+              fill: '#fffdf8', stroke: '#287d72', strokeWidth: 2, hitStrokeWidth: 34,
             }" />
           </template>
 
@@ -1936,7 +1961,7 @@ defineExpose({ fitCanvas, exportCanvas })
             name: `point:${selectedShapeId}:${handle.index}`, x: handle.x, y: handle.y,
             radius: selectedPointIndex === handle.index ? 6 : 4.5,
             fill: selectedPointIndex === handle.index ? '#e3a43b' : '#fffdf8',
-            stroke: '#b24631', strokeWidth: 1.8,
+            stroke: '#b24631', strokeWidth: 1.8, hitStrokeWidth: 35,
           }" />
 
           <template v-if="pathAnchorHandles.length && !exportingCanvas">
@@ -1948,21 +1973,25 @@ defineExpose({ fitCanvas, exportCanvas })
             <v-circle v-for="handle in pathMidpointHandles" :key="`path-mid-${handle.segmentIndex}`"
               :config="{
                 name: `path-midpoint:${handle.segmentIndex}`, x: handle.x, y: handle.y,
-                radius: 4.5, fill: '#e3a43b', stroke: '#fffdf8', strokeWidth: 1.5,
+                radius: 4.5, fill: '#e3a43b', stroke: '#fffdf8', strokeWidth: 1.5, hitStrokeWidth: 35,
               }" />
             <v-circle v-for="handle in pathControlHandles" :key="`control-${handle.control}-${handle.nodeIndex}`"
               :config="{
                 name: `path-control:${handle.control}:${handle.nodeIndex}`,
                 x: handle.x, y: handle.y, radius: 4,
-                fill: '#fffdf8', stroke: '#287d72', strokeWidth: 1.7,
+                fill: '#fffdf8', stroke: '#287d72', strokeWidth: 1.7, hitStrokeWidth: 36,
               }" />
             <v-rect v-for="handle in pathAnchorHandles" :key="`anchor-${handle.index}`" :config="{
               name: `path-anchor:${handle.index}`, x: handle.x - 4.5, y: handle.y - 4.5,
               width: 9, height: 9,
               fill: selectedPathNodeIndex === handle.index ? '#e3a43b' : '#fffdf8',
-              stroke: '#b24631', strokeWidth: 1.8,
+              stroke: '#b24631', strokeWidth: 1.8, hitStrokeWidth: 35,
             }" />
           </template>
+
+          <v-circle v-if="selectedEdge && !exportingCanvas" :config="{
+            ...toCanvasPoint(selectedEdge.point), radius: 7, fill: '#e3a43b', stroke: '#fffdf8', strokeWidth: 2, listening: false,
+          }" />
 
           <template v-if="draftPoints.length && !exportingCanvas">
             <v-line :config="{ points: draftCanvasPoints, stroke: '#b24631', strokeWidth: 2, dash: [7, 4] }" />
@@ -2202,15 +2231,26 @@ defineExpose({ fitCanvas, exportCanvas })
     </div>
     <div v-if="activeTool === 'polygon'" class="polygon-hint">
       <b>多边形描点</b>
-      <span>点击添加节点 · 点击起点或 Enter 闭合 · ESC 取消</span>
+      <span>点按添加节点 · 点按起点闭合</span>
+      <button type="button" :disabled="draftPoints.length < 3" @click.stop="finishPolygon">闭合轮廓</button>
+      <button type="button" :disabled="!draftPoints.length" @click.stop="store.cancelDrawing()">取消绘制</button>
     </div>
     <div v-if="activeTool === 'path'" class="polygon-hint path-hint">
       <b>贝塞尔路径</b>
-      <span>0.5cm 磁吸 · 接近水平/垂直自动拉直 · Alt 临时自由方向 · 点击起点闭合</span>
+      <span>0.5cm 磁吸 · 点按起点闭合 · 双指平移缩放</span>
       <button type="button" :disabled="draftPathNodes.length < 2"
-        @mousedown.stop @click.stop="finishPath(false)">
+        @pointerdown.stop @click.stop="finishPath(false)">
         完成开放路径 <kbd>Enter</kbd>
       </button>
+      <button type="button" :disabled="draftPathNodes.length < 3" @click.stop="finishPath(true)">闭合轮廓</button>
+      <button type="button" :disabled="!draftPathNodes.length" @click.stop="store.cancelDrawing()">取消绘制</button>
+      <button type="button" :aria-pressed="freeDirection" @click.stop="freeDirection = !freeDirection">{{ freeDirection ? '自由方向' : '方向吸附' }}</button>
+    </div>
+    <div v-if="activeTool === 'select' && selectedShape && (selectedEdge || selectedNodeIndex !== null)" class="node-actions" role="group" aria-label="节点编辑">
+      <button v-if="selectedEdge" type="button" :disabled="selectedEdge.t <= 0.0001 || selectedEdge.t >= 0.9999" @click.stop="insertSelectedNode">插入节点</button>
+      <button v-if="selectedNodeIndex !== null" type="button" :disabled="!canDeleteNode" @click.stop="deleteSelectedNode">删除节点</button>
+      <span v-if="selectedNodeIndex !== null && !canDeleteNode">节点已达下限</span>
+      <button type="button" :aria-pressed="freeDirection" @click.stop="freeDirection = !freeDirection">{{ freeDirection ? '自由方向' : '方向吸附' }}</button>
     </div>
   </div>
 </template>
