@@ -488,3 +488,36 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .editor-notice { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); max-width: calc(100vw - 32px); padding: 12px 18px; margin: 0; z-index: 60; color: #fff; background: #263b34; border-radius: 10px; font-size: 14px; pointer-events: none; }
 .calculation-message { margin: 0; padding: 10px 16px; background: #fff3dd; color: #7d4519; font-size: 14px; flex: 0 0 auto; }
 .calculation-message p { margin: 4px 0; }
+
+.zoom-control button, .zoom-control .fit-button { min-width: 44px; height: 44px; }
+.zoom-control span { width: 76px; }
+.zoom-control span small { display: block; font-size: 10px; white-space: nowrap; }
+.canvas-toolbar .segmented-control button { min-width: 44px; min-height: 44px; }
+.canvas-toolbar .tool-group { flex: 0 0 auto; }
+.export-button { min-height: 44px; }
+.sidebar-backdrop { position: absolute; inset: 0; z-index: 9; border: 0; background: rgba(20,31,27,.35); }
+.sidebar-close { display: block; min-height: 44px; margin: 12px; padding: 8px 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--forest); }
+
+@media (min-width: 901px) and (max-width: 1400px) {
+  .canvas-toolbar { overflow-x: auto; }
+  .toolbar-summary { flex: 0 0 auto; }
+}
+
+@media (max-width: 900px) and (orientation: portrait) {
+  .app-shell { height: 100dvh; min-height: 0; overflow: hidden; }
+  .editor-main, .editor-main.sidebar-collapsed { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); height: auto; min-height: 0; }
+  .left-panel { position: absolute; inset: 0 auto 0 0; z-index: 10; width: min(340px, calc(100% - 48px)); max-height: none; display: block; border-right: 1px solid var(--line); box-shadow: 8px 0 30px rgba(20,31,27,.15); }
+  .editor-main.sidebar-collapsed .left-panel { display: none; }
+  .workspace { height: auto; }
+  .canvas-toolbar { flex: 0 0 auto; display: grid; grid-template-columns: 44px 152px 140px minmax(0, 1fr); gap: 8px; padding: 8px 12px; overflow: visible; min-height: 116px; }
+  .canvas-toolbar .toolbar-divider { display: none; }
+  .sidebar-toggle-button { grid-column: 1; grid-row: 1; }
+  .shape-tools { grid-column: 2; grid-row: 1; }
+  .history-tools { grid-column: 3; grid-row: 1; }
+  .toolbar-summary { grid-column: 4; grid-row: 1; display: flex; min-width: 0; white-space: normal; text-align: center; }
+  .toolbar-summary span { display: none; }
+  .canvas-toolbar .segmented-control { grid-column: 1 / 3; grid-row: 2; justify-self: start; }
+  .zoom-control { grid-column: 3; grid-row: 2; width: max-content; }
+  .export-button { grid-column: 4; grid-row: 2; justify-self: end; }
+  .tool-button { min-width: 44px; }
+}

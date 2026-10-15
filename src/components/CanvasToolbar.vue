@@ -16,6 +16,7 @@ const {
   selectedShapeId,
   shapePlans,
   zoom,
+  minimumViewZoom,
   viewMode,
 } = storeToRefs(store)
 
@@ -41,7 +42,7 @@ function chooseTool(tool: EditorTool): void {
 }
 
 function changeZoom(delta: number): void {
-  zoom.value = Math.min(60, Math.max(5, zoom.value + delta))
+  zoom.value = Math.min(60, Math.max(minimumViewZoom.value, zoom.value + delta))
 }
 </script>
 
@@ -109,7 +110,7 @@ function changeZoom(delta: number): void {
     </div>
     <div class="zoom-control">
       <button type="button" @click="changeZoom(-2)">−</button>
-      <span>{{ Math.round(zoom * 5) }}%</span>
+      <span>{{ Number((zoom * 5).toFixed(1)) }}%<small>仅视图缩放</small></span>
       <button type="button" @click="changeZoom(2)">+</button>
       <button class="fit-button" type="button" @click="emit('fit')">适应</button>
     </div>

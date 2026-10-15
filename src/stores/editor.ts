@@ -167,6 +167,8 @@ export const useEditorStore = defineStore('editor', () => {
     validInitialSelection(persistedDocument?.selectedPlanShapeId ?? selectedShapeId.value),
   )
   const zoom = ref(20)
+  const minimumViewZoom = ref(5)
+  const projectOpenRevision = ref(0)
   const shapeDirections = ref<Record<string, KnitDirection>>(
     clonePlain(persistedDocument?.shapeDirections ?? {}),
   )
@@ -762,7 +764,7 @@ export const useEditorStore = defineStore('editor', () => {
     draftPathNodes.value = []
     draftTool.value = null
     drawingSessionId.value = null
-    activeTool.value = 'select'
+    activeTool.value = 'path'
     rasterCache.clear()
     instructionCache.clear()
   }
@@ -788,6 +790,7 @@ export const useEditorStore = defineStore('editor', () => {
       ?? selectedShapeId.value
     resetProjectSession()
     shapesRevision.value += 1
+    projectOpenRevision.value += 1
   }
 
   function saveLibraryNow(): boolean {
@@ -906,40 +909,30 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   function activateProject(projectId: string, discardDraft = false): boolean {
-    if (projectId === activeProjectId.value) return true
     if (hasUnfinishedDraft.value && !discardDraft) return false
     const project = projects.value.find((item) => item.id === projectId)
     if (!project) return false
-    autoSave.flush()
-    activeProjectId.value = project.id
-    applyProjectDocument(project.document)
-    saveLibraryNow()
-    return true
+    if (!autoSave.flush()) return false
+    return persistAndActivateProjects(clonePlain(projects.value), project)
   }
 
   function createProject(discardDraft = false): string | null {
     if (projects.value.length >= MAX_PROJECTS) return null
     if (hasUnfinishedDraft.value && !discardDraft) return null
-    autoSave.flush()
+    if (!autoSave.flush()) return null
     const project = makeBlankProject()
-    projects.value.push(project)
-    activeProjectId.value = project.id
-    applyProjectDocument(project.document)
-    saveLibraryNow()
-    return project.id
+    return persistAndActivateProjects([...clonePlain(projects.value), project], project) ? project.id : null
   }
 
   function replaceProject(projectId: string, discardDraft = false): string | null {
     if (hasUnfinishedDraft.value && !discardDraft) return null
     const index = projects.value.findIndex((project) => project.id === projectId)
     if (index === -1) return null
-    autoSave.flush()
+    if (!autoSave.flush()) return null
     const project = makeBlankProject()
-    projects.value.splice(index, 1, project)
-    activeProjectId.value = project.id
-    applyProjectDocument(project.document)
-    saveLibraryNow()
-    return project.id
+    const nextProjects = clonePlain(projects.value)
+    nextProjects.splice(index, 1, project)
+    return persistAndActivateProjects(nextProjects, project) ? project.id : null
   }
 
   function renameProject(projectId: string, name: string): boolean {
@@ -958,14 +951,18 @@ export const useEditorStore = defineStore('editor', () => {
     const index = projects.value.findIndex((project) => project.id === projectId)
     if (index === -1) return false
     if (projectId === activeProjectId.value && hasUnfinishedDraft.value && !discardDraft) return false
-    autoSave.flush()
-    projects.value.splice(index, 1)
+    if (!autoSave.flush()) return false
+    const nextProjects = clonePlain(projects.value)
+    nextProjects.splice(index, 1)
     if (projectId === activeProjectId.value) {
-      const next = [...projects.value].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
-      activeProjectId.value = next.id
-      applyProjectDocument(next.document)
+      const next = [...nextProjects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
+      return persistAndActivateProjects(nextProjects, next)
     }
-    saveLibraryNow()
+    if (!saveProjectLibrary({ version: PROJECT_LIBRARY_VERSION, activeProjectId: activeProjectId.value, projects: nextProjects }, storage)) {
+      storageStatus.value = 'error'
+      return false
+    }
+    projects.value = nextProjects
     return true
   }
 
@@ -1005,6 +1002,8 @@ export const useEditorStore = defineStore('editor', () => {
     selectedShapeId,
     selectedPlanShapeId,
     zoom,
+    minimumViewZoom,
+    projectOpenRevision,
     direction,
     shapeDirections,
     shapeRoundingPolicies,

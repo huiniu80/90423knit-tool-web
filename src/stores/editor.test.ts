@@ -29,6 +29,39 @@ function stubBrowser(storage: MemoryStorage): void {
 }
 
 describe('Editor Store', () => {
+  it('同尺寸与同一方案成功打开均重置路径工具，失败和自动保存不重置会话', async () => {
+    vi.useFakeTimers()
+    const storage = new MemoryStorage()
+    stubBrowser(storage)
+    const store = useEditorStore()
+    const firstId = store.activeProjectId
+    store.addDefaultShape('rectangle')
+    const original = JSON.stringify(store.shapes)
+    const nextId = store.createProject()!
+    expect(store.projectOpenRevision).toBe(1)
+    store.activeTool = 'pan'
+    expect(store.activateProject(firstId)).toBe(true)
+    expect(store.activeTool).toBe('path')
+    expect(JSON.stringify(store.shapes)).toBe(original)
+    expect(store.projectOpenRevision).toBe(2)
+    store.activeTool = 'select'
+    expect(store.activateProject(firstId)).toBe(true)
+    expect(store.projectOpenRevision).toBe(3)
+    expect(store.activeTool).toBe('path')
+    store.activeTool = 'pan'
+    await nextTick()
+    vi.advanceTimersByTime(300)
+    expect(store.projectOpenRevision).toBe(3)
+    expect(store.activeTool).toBe('pan')
+    storage.failWrites = true
+    expect(store.activateProject(nextId)).toBe(false)
+    expect(store.createProject()).toBeNull()
+    expect(store.deleteProject(firstId)).toBe(false)
+    expect(store.projectOpenRevision).toBe(3)
+    expect(store.activeProjectId).toBe(firstId)
+    expect(store.activeTool).toBe('pan')
+    store.$dispose()
+  })
   it('指针取消恢复整次拖动源数据，不写撤销或保存中间状态', async () => {
     vi.useFakeTimers()
     const storage = new MemoryStorage()

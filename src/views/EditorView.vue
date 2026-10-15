@@ -10,9 +10,16 @@ import { useEditorStore } from '../stores/editor'
 import { loadSidebarExpanded, saveSidebarExpanded } from './editorLayoutPreferences'
 
 const store = useEditorStore()
-const { activeProject, gridAssessment, hasUnfinishedDraft, projects, storageStatus, notice, shapePlans } = storeToRefs(store)
+const { activeProject, gridAssessment, hasUnfinishedDraft, projects, storageStatus, notice, shapePlans, projectOpenRevision } = storeToRefs(store)
 const canvasRef = ref<InstanceType<typeof KnittingCanvas> | null>(null)
 const sidebarExpanded = ref(loadSidebarExpanded())
+const portraitLayout = ref(false)
+let portraitQuery: MediaQueryList | null = null
+function updatePortraitLayout(): void {
+  portraitLayout.value = portraitQuery?.matches ?? false
+  sidebarExpanded.value = portraitLayout.value ? false : loadSidebarExpanded()
+  scheduleCanvasFit()
+}
 const projectLibraryOpen = ref(false)
 const replacementMode = ref(false)
 let canvasFitTimer: ReturnType<typeof setTimeout> | null = null
@@ -29,7 +36,7 @@ function scheduleCanvasFit(): void {
 
 function toggleSidebar(): void {
   sidebarExpanded.value = !sidebarExpanded.value
-  saveSidebarExpanded(sidebarExpanded.value)
+  if (!portraitLayout.value) saveSidebarExpanded(sidebarExpanded.value)
   scheduleCanvasFit()
 }
 
@@ -51,10 +58,15 @@ function createProject(): void {
   if (store.createProject(true)) scheduleCanvasFit()
 }
 
-onMounted(scheduleCanvasFit)
+onMounted(() => {
+  portraitQuery = window.matchMedia('(max-width: 900px) and (orientation: portrait)')
+  portraitQuery.addEventListener('change', updatePortraitLayout)
+  updatePortraitLayout()
+})
 
 onBeforeUnmount(() => {
   if (canvasFitTimer !== null) clearTimeout(canvasFitTimer)
+  portraitQuery?.removeEventListener('change', updatePortraitLayout)
 })
 </script>
 
@@ -86,9 +98,11 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <main :class="['editor-main', { 'sidebar-collapsed': !sidebarExpanded }]">
+    <main :class="['editor-main', { 'sidebar-collapsed': !sidebarExpanded, 'portrait-layout': portraitLayout }]">
+      <button v-if="portraitLayout && sidebarExpanded" class="sidebar-backdrop" type="button" aria-label="关闭参数栏" @click="toggleSidebar" />
       <aside id="editor-sidebar" class="left-panel" :aria-hidden="!sidebarExpanded"
         :inert="!sidebarExpanded">
+        <button v-if="portraitLayout" class="sidebar-close" type="button" @click="toggleSidebar">关闭参数栏</button>
         <GaugePanel />
         <ShapePropertyPanel />
       </aside>
@@ -99,7 +113,7 @@ onBeforeUnmount(() => {
         <div v-if="shapePlans.some((plan) => plan.calculationMessage)" class="calculation-message" role="status">
           <p v-for="plan in shapePlans.filter((item) => item.calculationMessage)" :key="plan.shapeId">{{ plan.shapeName || '未命名轮廓' }}：{{ plan.calculationMessage }}</p>
         </div>
-        <KnittingCanvas v-if="gridAssessment.status !== 'blocked'" ref="canvasRef" />
+        <KnittingCanvas v-if="gridAssessment.status !== 'blocked'" :key="projectOpenRevision" ref="canvasRef" />
         <div v-else class="grid-blocked-placeholder" role="alert">
           <strong>已暂停生成编织图解</strong>
           <p>{{ gridAssessment.issues.find((issue) => issue.severity === 'error')?.message }}</p>

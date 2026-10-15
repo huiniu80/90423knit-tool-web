@@ -144,6 +144,7 @@ const {
   activeTool,
   viewMode,
   zoom,
+  minimumViewZoom,
   draftPoints,
   draftPathNodes,
   draftTool,
@@ -1123,7 +1124,7 @@ function updateTouchGesture(): void {
   const distance = Math.max(1, Math.hypot(second.x - first.x, second.y - first.y))
   const nextZoom = Math.min(
     60,
-    Math.max(5, touchGesture.startZoom * distance / touchGesture.startDistance),
+    Math.max(minimumViewZoom.value, touchGesture.startZoom * distance / touchGesture.startDistance),
   )
   const localX = (touchGesture.startCenter.x - touchGesture.startPan.x) / touchGesture.startZoom
   const localY = (touchGesture.startCenter.y - touchGesture.startPan.y) / touchGesture.startZoom
@@ -1688,7 +1689,7 @@ function onWheel(event: KonvaEventObject<WheelEvent>): void {
   if (!pointer) return
 
   const oldZoom = zoom.value
-  const nextZoom = Math.min(60, Math.max(5, oldZoom * (event.evt.deltaY > 0 ? 0.9 : 1.1)))
+  const nextZoom = Math.min(60, Math.max(minimumViewZoom.value, oldZoom * (event.evt.deltaY > 0 ? 0.9 : 1.1)))
   const localX = (pointer.x - pan.value.x) / oldZoom
   const localY = (pointer.y - pan.value.y) / oldZoom
   zoom.value = nextZoom
@@ -1750,17 +1751,18 @@ function onWindowKeyDown(event: KeyboardEvent): void {
 function fitCanvas(): void {
   const verticalPadding = 36
   // 始终预留标注区域，让同一画布在轮廓、针格和对比模式下保持相同缩放与位置。
-  const horizontalPadding = annotationViewportMargin + annotationWidth + annotationFabricGap
+  const horizontalPadding = Math.min(annotationViewportMargin + annotationWidth + annotationFabricGap, stageSize.value.width * 0.3)
   const nextZoom = Math.min(
     48,
     Math.max(
-      5,
+      Number.EPSILON,
       Math.min(
         (stageSize.value.width - horizontalPadding * 2) / fabric.value.widthCm,
         (stageSize.value.height - verticalPadding * 2) / fabric.value.heightCm,
       ),
     ),
   )
+  minimumViewZoom.value = Math.min(5, nextZoom)
   zoom.value = nextZoom
   pan.value = {
     x: (stageSize.value.width - fabric.value.widthCm * nextZoom) / 2,
