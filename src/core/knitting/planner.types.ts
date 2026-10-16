@@ -1,4 +1,5 @@
 import type { StitchSegment } from '../raster/raster.types'
+import type { RowOperation } from './rowOperations'
 
 export type KnitDirection = 'bottom-up' | 'top-down'
 
@@ -14,6 +15,9 @@ export interface KnittingInstruction {
   transition: InstructionTransition
   centerChange: number
   panelChanges: PanelChange[]
+  operations?: RowOperation[]
+  finishOperations?: RowOperation[]
+  conflict?: string | null
 }
 
 export type InstructionTransition =
@@ -64,6 +68,7 @@ export interface GarmentEdgeShapingPlan
 }
 
 export interface ShapingSequenceStep extends ShapingRule {
+  technique?: 'increase' | 'decrease' | 'bind-off'
   order: number
   edge: GarmentEdgeRole
   label: string

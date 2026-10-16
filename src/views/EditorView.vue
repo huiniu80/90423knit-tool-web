@@ -5,6 +5,7 @@ import CanvasToolbar from '../components/CanvasToolbar.vue'
 import GaugePanel from '../components/GaugePanel.vue'
 import KnittingCanvas from '../components/KnittingCanvas.vue'
 import ProjectLibraryDialog from '../components/ProjectLibraryDialog.vue'
+import RowPlanDialog from '../components/RowPlanDialog.vue'
 import ShapePropertyPanel from '../components/ShapePropertyPanel.vue'
 import { useEditorStore } from '../stores/editor'
 import { loadSidebarExpanded, saveSidebarExpanded } from './editorLayoutPreferences'
@@ -22,6 +23,7 @@ function updatePortraitLayout(): void {
 }
 const projectLibraryOpen = ref(false)
 const replacementMode = ref(false)
+const rowPlanOpen = ref(false)
 let canvasFitTimer: ReturnType<typeof setTimeout> | null = null
 
 function scheduleCanvasFit(): void {
@@ -113,6 +115,7 @@ onBeforeUnmount(() => {
       <section class="workspace">
         <CanvasToolbar :sidebar-expanded="sidebarExpanded" @toggle-sidebar="toggleSidebar"
           @fit="canvasRef?.fitCanvas()" @export="canvasRef?.exportCanvas()" />
+        <button class="row-plan-open" type="button" @click="rowPlanOpen = true">查看逐行操作表</button>
         <div v-if="shapePlans.some((plan) => plan.calculationMessage)" class="calculation-message" role="status">
           <p v-for="plan in shapePlans.filter((item) => item.calculationMessage)" :key="plan.shapeId">{{ plan.shapeName || '未命名轮廓' }}：{{ plan.calculationMessage }}</p>
         </div>
@@ -126,5 +129,6 @@ onBeforeUnmount(() => {
     </main>
     <ProjectLibraryDialog :open="projectLibraryOpen" :replacement-mode="replacementMode"
       @close="projectLibraryOpen = false" @changed="scheduleCanvasFit" />
+    <RowPlanDialog :open="rowPlanOpen" @close="rowPlanOpen = false" />
   </div>
 </template>

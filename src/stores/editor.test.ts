@@ -29,6 +29,33 @@ function stubBrowser(storage: MemoryStorage): void {
 }
 
 describe('Editor Store', () => {
+  it('逐行侧别工艺覆盖可撤销保存恢复，针格不变，上游重算保留方向', () => {
+    vi.useFakeTimers()
+    const storage = new MemoryStorage()
+    stubBrowser(storage)
+    const store = useEditorStore()
+    store.addShape({ id: 'taper', type: 'path', closed: true, nodes: [
+      { anchor: { x: 5, y: 5 } }, { anchor: { x: 15, y: 5 } },
+      { anchor: { x: 10, y: 10 } }, { anchor: { x: 5, y: 10 } },
+    ] })
+    const operation = store.selectedShapePlan!.instructions.flatMap(i => i.operations ?? []).find(o => o.canOverride)!
+    const rows = JSON.stringify(store.selectedShapePlan!.rasterRows)
+    store.setOperationOverride('taper', operation.key, 'bind-off')
+    expect(store.operationOverrides.taper?.[operation.key]).toBe('bind-off')
+    expect(JSON.stringify(store.selectedShapePlan!.rasterRows)).toBe(rows)
+    store.undo()
+    expect(store.operationOverrides.taper?.[operation.key]).toBeUndefined()
+    store.redo()
+    const file = store.createProjectExport()!
+    store.$dispose()
+    setActivePinia(createPinia())
+    const restored = useEditorStore()
+    expect(restored.operationOverrides.taper?.[operation.key]).toBe('bind-off')
+    expect(file.project.document.operationOverrides).toEqual(restored.operationOverrides)
+    restored.setGaugeInputValue('sampleWidthCm', 12)
+    expect(restored.operationOverrides.taper?.[operation.key]).toBe('bind-off')
+    restored.$dispose()
+  })
   it('删除与替换保留最新完整源数据，恢复满额明确替换且两侧一次保存', () => {
     vi.useFakeTimers()
     const storage = new MemoryStorage()

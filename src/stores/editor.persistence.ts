@@ -5,6 +5,7 @@ import type { RasterOptions } from '../core/raster/raster.types'
 import type { ViewMode } from './editor.types'
 import type { ShapeRoundingPolicy } from '../core/dimensions/dimensionConversion'
 import { detectPathSymmetry, enablePathMirror } from '../core/geometry/path'
+import type { OperationOverrides } from '../core/knitting/rowOperations'
 
 /** Legacy single-document key. Kept only for one-time migration. */
 export const EDITOR_STORAGE_KEY = 'knitting-pattern-planner:editor:v1'
@@ -31,6 +32,7 @@ export interface PersistedEditorDocument {
   viewMode?: ViewMode
   /** Manual card positions relative to the canvas bottom-left origin, in centimeters. */
   cardPositions?: Record<string, Point>
+  operationOverrides?: Record<string, OperationOverrides>
   selectedShapeId: string | null
   selectedPlanShapeId: string | null
 }
@@ -188,6 +190,8 @@ export function isPersistedEditorDocument(value: unknown): value is PersistedEdi
     || !isShapeRoundingPolicies(value.shapeRoundingPolicies)
     || !isRasterOptions(value.rasterOptions)
     || (value.cardPositions !== undefined && (!isRecord(value.cardPositions) || !Object.entries(value.cardPositions).every(([key, point]) => /^.+:\d+$/.test(key) && isPoint(point))))
+    || (value.operationOverrides !== undefined && (!isRecord(value.operationOverrides) || !Object.values(value.operationOverrides).every(overrides => isRecord(overrides)
+      && Object.entries(overrides).every(([key, kind]) => /^\d+:(left-outer|left-neck|right-neck|right-outer)$/.test(key) && (kind === 'decrease' || kind === 'bind-off')))))
     || (value.rasterRuleNoticePending !== undefined && typeof value.rasterRuleNoticePending !== 'boolean')
     || (value.viewMode !== undefined
       && value.viewMode !== 'outline'
@@ -198,6 +202,7 @@ export function isPersistedEditorDocument(value: unknown): value is PersistedEdi
 
   const shapeIds = new Set(value.shapes.map((shape) => shape.id))
   return shapeIds.size === value.shapes.length
+    && Object.keys(value.operationOverrides ?? {}).every(shapeId => shapeIds.has(shapeId))
     && Object.keys(value.shapeDirections).every((shapeId) => shapeIds.has(shapeId))
     && Object.keys(value.shapeRoundingPolicies).every((shapeId) => shapeIds.has(shapeId))
 }

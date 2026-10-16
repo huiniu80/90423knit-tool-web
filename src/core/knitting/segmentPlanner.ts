@@ -29,8 +29,8 @@ export interface SegmentShapingMarker {
 
 const shortEdgeLabels: Record<GarmentEdgeRole, string> = {
   'left-outer': '左外侧',
-  'left-neck': '左肩领口侧',
-  'right-neck': '右肩领口侧',
+  'left-neck': '左段右侧',
+  'right-neck': '右段左侧',
   'right-outer': '右外侧',
 }
 
@@ -95,10 +95,7 @@ function rowRange(step: ShapingSequenceStep): string {
 }
 
 function compactStepText(step: ShapingSequenceStep, includeEdge: boolean): string {
-  const isOuterBindOff = step.operation === 'decrease'
-    && (step.edge === 'left-outer' || step.edge === 'right-outer')
-    && step.stitchCount > 1
-  const operation = step.operation === 'increase' ? '加' : isOuterBindOff ? '平收' : '减'
+  const operation = step.technique === 'bind-off' ? '平收' : step.operation === 'increase' ? '加' : '减'
   const edge = includeEdge ? `${shortEdgeLabels[step.edge]} · ` : ''
   if (step.repeatCount === 1) {
     return `${edge}第${rowRange(step)} · ${operation}${step.stitchCount}针1次`
@@ -156,7 +153,7 @@ export function describeBoundarySegmentShaping(
   const lastRow = activeRows.at(-1)
   const isHorizontal = bounds.height <= gauge.rowHeightCm * 0.55
   if (isHorizontal && firstRow && Math.abs(segment.anchor.y - firstRow.yCm) <= gauge.rowHeightCm) {
-    const castOnLabel = '下摆起针'
+    const castOnLabel = '起始边起针'
     return {
       boundarySide: 'both',
       lines: [
@@ -168,12 +165,12 @@ export function describeBoundarySegmentShaping(
   }
   if (isHorizontal && lastRow && Math.abs(segment.anchor.y - lastRow.yCm) <= gauge.rowHeightCm) {
     if (lastRow.segments.length === 2) {
-      const side = segment.anchor.x <= outlineCenterX ? '左肩' : '右肩'
-      const segmentIndex = side === '左肩' ? 0 : 1
+      const side = segment.anchor.x <= outlineCenterX ? '左段' : '右段'
+      const segmentIndex = side === '左段' ? 0 : 1
       const shoulderStitches = lastRow.segments[segmentIndex]
         ? lastRow.segments[segmentIndex]!.endStitch - lastRow.segments[segmentIndex]!.startStitch + 1
         : 0
-      const panelRole = side === '左肩' ? 'left-shoulder' : 'right-shoulder'
+      const panelRole = side === '左段' ? 'left-shoulder' : 'right-shoulder'
       const lastChangeRow = [...instructions].reverse().find((instruction) =>
         instruction.panelChanges.some((change) =>
           change.panel === panelRole && (change.leftChange !== 0 || change.rightChange !== 0),
@@ -187,7 +184,7 @@ export function describeBoundarySegmentShaping(
           `${side} · 保留 ${shoulderStitches} 针`,
           flatRows > 0
             ? `${instructionRange(flatStart, instructions.length)} · 不加不减（平织 ${flatRows} 行）`
-            : '肩线处直接收针',
+            : '该段结束平收',
           `织完平收 ${shoulderStitches} 针`,
         ],
         markers: [],
@@ -232,7 +229,7 @@ export function describeBoundarySegmentShaping(
       : null
   const lines = numberedSteps.length
     ? [
-        `${outerTitle ?? (edges.length > 1 ? '圆领塑形' : shortEdgeLabels[edge])} · 按 ${orderText} 编织`,
+        `${outerTitle ?? (edges.length > 1 ? '中间分段塑形' : shortEdgeLabels[edge])} · 按 ${orderText} 编织`,
         ...numberedSteps.map((step) =>
           `${stepNumberLabel(step.order)}. ${compactStepText(step, edges.length > 1)}`,
         ),
@@ -241,9 +238,9 @@ export function describeBoundarySegmentShaping(
     : []
   if (isNeck && split) {
     lines.unshift(
-      `领口起始 · 第 ${split.rowNumber} 行中间收 ${Math.abs(split.centerChange)} 针`,
-      `左肩留 ${edgeStitchCount(rows.find((row) => row.rowIndex === split.sourceRowIndex), 'left-neck')} 针 · 右肩留 ${edgeStitchCount(rows.find((row) => row.rowIndex === split.sourceRowIndex), 'right-neck')} 针`,
-      '左右肩从此分开编织，领口侧镜像减针',
+      `中间分段 · 第 ${split.rowNumber} 行前中间平收 ${Math.abs(split.centerChange)} 针`,
+      `左段留 ${edgeStitchCount(rows.find((row) => row.rowIndex === split.sourceRowIndex), 'left-neck')} 针 · 右段留 ${edgeStitchCount(rows.find((row) => row.rowIndex === split.sourceRowIndex), 'right-neck')} 针`,
+      '左右两段从此分开编织，各侧按逐行表执行',
     )
   }
 
@@ -258,10 +255,6 @@ export function describeBoundarySegmentShaping(
     const part = firstOuterChange && (lastInstruction?.rowNumber ?? 0) < firstOuterChange
       ? `${side}身体`
       : `${side}边界`
-    const row = firstInstruction
-      ? rows.find((item) => item.rowIndex === firstInstruction.sourceRowIndex)
-      : undefined
-    const stitches = edgeStitchCount(row, edge)
     const rowCount = firstInstruction && lastInstruction
       ? lastInstruction.rowNumber - firstInstruction.rowNumber + 1
       : 0
@@ -269,7 +262,7 @@ export function describeBoundarySegmentShaping(
       firstInstruction && lastInstruction
         ? `${part} · ${instructionRange(firstInstruction.rowNumber, lastInstruction.rowNumber)}`
         : `${part}`,
-      `${stitches || firstInstruction?.stitchCount || 0} 针 · 不加不减（平织 ${rowCount} 行）`,
+      `该侧不加不减（平织 ${rowCount} 行）· 每行针数见逐行表`,
     )
   }
 

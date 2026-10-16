@@ -534,14 +534,15 @@ const annotationModels = computed<AnnotationModel[]>(() => {
     : allSegments
 
   for (const segment of annotatedSegments) {
+    const shapePlan = planByShapeId.get(segment.shapeId)
+    const hasProcessOverrides = Object.keys(store.operationOverrides[segment.shapeId] ?? {}).length > 0
     const mirrorSymmetry = segment.sourceShape.type === 'path'
       ? pathConstraintSymmetry(segment.sourceShape)
       : null
     const canonicalSegmentIndex = segment.sourceShape.type === 'path'
       ? canonicalPathMirrorSegmentIndex(segment.sourceShape, segment.segmentIndex)
       : segment.segmentIndex
-    if (canonicalSegmentIndex !== segment.segmentIndex) continue
-    const shapePlan = planByShapeId.get(segment.shapeId)
+    if (!hasProcessOverrides && canonicalSegmentIndex !== segment.segmentIndex) continue
     if (!shapePlan || shapePlan.calculationMessage) continue
     const description = describeBoundarySegmentShaping(
       segment,
@@ -565,7 +566,7 @@ const annotationModels = computed<AnnotationModel[]>(() => {
     const lines = [
       `${shapeName} · 第 ${segment.segmentIndex + 1} 段 · ↑ 下→上`,
       ...ruleLines,
-      ...(mirroredCounterpartIndex !== null && mirroredCounterpartIndex !== segment.segmentIndex
+      ...(!hasProcessOverrides && mirroredCounterpartIndex !== null && mirroredCounterpartIndex !== segment.segmentIndex
         ? ['右侧按相同规律镜像编织']
         : []),
     ]

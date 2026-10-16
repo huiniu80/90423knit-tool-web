@@ -23,7 +23,7 @@ const {
 const selectedPlanOverview = computed(() => {
   const plan = shapePlans.value.find((item) => item.shapeId === selectedShapeId.value)
   const first = plan?.instructions[0]
-  if (!plan?.isFabric || !first) return null
+  if (!plan?.isFabric || !plan.canExport || !first) return null
   return {
     castOnStitches: first.stitchCount,
     totalRows: plan.instructions.length,

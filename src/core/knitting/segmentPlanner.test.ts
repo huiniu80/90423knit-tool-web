@@ -29,10 +29,10 @@ describe('分段加减针说明', () => {
     )
 
     expect(description.boundarySide).toBe('both')
-    expect(description.lines.some((line) => line.includes('领口起始'))).toBe(true)
+    expect(description.lines.some((line) => line.includes('中间分段'))).toBe(true)
     expect(description.lines.some((line) => line.includes('分开编织'))).toBe(true)
-    expect(description.lines.some((line) => line.includes('左肩领口侧'))).toBe(true)
-    expect(description.lines.some((line) => line.includes('右肩领口侧'))).toBe(true)
+    expect(description.lines.some((line) => line.includes('左段右侧'))).toBe(true)
+    expect(description.lines.some((line) => line.includes('右段左侧'))).toBe(true)
     expect(description.lines.some((line) => line.includes('减'))).toBe(true)
     expect(description.lines.some((line) => line.includes('加'))).toBe(false)
     expect(description.lines.some((line) => line.includes('按 1 →'))).toBe(true)
@@ -127,7 +127,7 @@ describe('分段加减针说明', () => {
       5,
     )
 
-    expect(description.lines.some((line) => line.includes('领口侧镜像减针'))).toBe(true)
+    expect(description.lines.some((line) => line.includes('各侧按逐行表执行'))).toBe(true)
     expect(description.lines.every((line) => !line.includes('圆领塑形'))).toBe(true)
     expect(description.lines.every((line) => !line.includes('右肩领口侧'))).toBe(true)
   })

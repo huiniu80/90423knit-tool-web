@@ -18,6 +18,7 @@ import type { PathNode, PathShape, Point, Shape, ShapeType } from '../core/geome
 import { joinConnectedOpenPaths } from '../core/geometry/path'
 import { shapeCalculationIssue, shapeIssueMessage } from '../core/geometry/shapeValidation'
 import { generateInstructions } from '../core/knitting/planner'
+import type { OperationOverrides } from '../core/knitting/rowOperations'
 import type { KnitDirection } from '../core/knitting/planner.types'
 import { mergeRasterRows, rasterize, rasterizeShapes, shapeForRaster } from '../core/raster/rasterizer'
 import type { RasterOptions, RasterRow } from '../core/raster/raster.types'
@@ -65,6 +66,7 @@ function clonePlain<T>(value: T): T {
 const cloneShapes = (value: Shape[]): Shape[] => clonePlain(value)
 
 interface HistorySnapshot {
+  operationOverrides: Record<string, OperationOverrides>
   gaugeInput: GaugeInput
   fabric: FabricCanvas
   shapes: Shape[]
@@ -177,6 +179,7 @@ export const useEditorStore = defineStore('editor', () => {
   )
   const zoom = ref(20)
   const cardPositions = ref<Record<string, Point>>(clonePlain(persistedDocument.cardPositions ?? {}))
+  const operationOverrides = ref<Record<string, OperationOverrides>>(clonePlain(persistedDocument.operationOverrides ?? {}))
   const minimumViewZoom = ref(5)
   const projectOpenRevision = ref(0)
   const shapeDirections = ref<Record<string, KnitDirection>>(
@@ -313,13 +316,15 @@ export const useEditorStore = defineStore('editor', () => {
     )
     const shapeDirection = directionForShape(shape.id)
     const cachedInstructions = instructionCache.get(shape.id)
-    const planInstructions = cachedInstructions?.rows === rows
+    const baseInstructions = cachedInstructions?.rows === rows
       && cachedInstructions.direction === shapeDirection
       ? cachedInstructions.instructions
       : generateInstructions(rows, shapeDirection)
-    if (planInstructions !== cachedInstructions?.instructions) {
-      instructionCache.set(shape.id, { rows, direction: shapeDirection, instructions: planInstructions })
+    if (baseInstructions !== cachedInstructions?.instructions) {
+      instructionCache.set(shape.id, { rows, direction: shapeDirection, instructions: baseInstructions })
     }
+    const planInstructions = Object.keys(operationOverrides.value[shape.id] ?? {}).length
+      ? generateInstructions(rows, shapeDirection, operationOverrides.value[shape.id]) : baseInstructions
     const dimensions = createShapeDimensionResults(
       shape,
       gauge.value,
@@ -327,8 +332,10 @@ export const useEditorStore = defineStore('editor', () => {
     )
     const activeRows = rows.filter((row) => row.stitchCount > 0)
     const complex = activeRows.length > 0 && planInstructions.length === 0
+    const conflict = planInstructions.find(instruction => instruction.conflict)
     const calculationMessage = gridAssessment.value.status === 'blocked' ? '网格超限，已暂停计算'
       : issue ? shapeIssueMessage[issue]
+      : conflict ? `第 ${conflict.rowNumber} 行：${conflict.conflict}，已暂停编织计划`
       : complex ? '不支持的复杂断开结构，请修改轮廓'
       : !activeRows.length ? '目标小于当前密度下的一针或一行，未落入针格' : ''
     return {
@@ -386,6 +393,7 @@ export const useEditorStore = defineStore('editor', () => {
       shapes: cloneShapes(mutationStart?.shapes ?? shapes.value),
       shapeDirections: validDirections,
       shapeRoundingPolicies: validRoundingPolicies,
+      operationOverrides: Object.fromEntries(Object.entries(operationOverrides.value).filter(([shapeId]) => shapeIds.has(shapeId))),
       rasterOptions: clonePlain(rasterOptions.value),
       viewMode: viewMode.value,
       cardPositions: Object.fromEntries(Object.entries(cardPositions.value).filter(([key]) => shapeIds.has(key.slice(0, key.lastIndexOf(':'))))),
@@ -430,6 +438,7 @@ export const useEditorStore = defineStore('editor', () => {
       selectedPlanShapeId,
       shapesRevision,
       cardPositions,
+      operationOverrides,
     ],
     autoSave.schedule,
     { deep: true },
@@ -445,6 +454,7 @@ export const useEditorStore = defineStore('editor', () => {
 
   function captureHistorySnapshot(): HistorySnapshot {
     return {
+      operationOverrides: clonePlain(operationOverrides.value),
       gaugeInput: clonePlain(gaugeInput.value),
       fabric: clonePlain(fabric.value),
       shapes: cloneShapes(shapes.value),
@@ -463,6 +473,7 @@ export const useEditorStore = defineStore('editor', () => {
   function restoreHistorySnapshot(entry: HistoryEntry): void {
     const { snapshot } = entry
     let shapesChanged = false
+    operationOverrides.value = clonePlain(snapshot.operationOverrides)
     if (JSON.stringify(gaugeInput.value) !== JSON.stringify(snapshot.gaugeInput)) {
       gaugeInput.value = clonePlain(snapshot.gaugeInput)
     }
@@ -800,6 +811,7 @@ export const useEditorStore = defineStore('editor', () => {
     rasterOptions.value = clonePlain(document.rasterOptions)
     viewMode.value = document.viewMode ?? 'overlay'
     cardPositions.value = clonePlain(document.cardPositions ?? {})
+    operationOverrides.value = clonePlain(document.operationOverrides ?? {})
     selectedShapeId.value = validSelection(document.selectedShapeId)
     selectedPlanShapeId.value = validSelection(document.selectedPlanShapeId)
       ?? selectedShapeId.value
@@ -1054,6 +1066,19 @@ export const useEditorStore = defineStore('editor', () => {
     cardPositions.value = next
   }
 
+  function setOperationOverride(shapeId: string, key: string, kind: 'decrease' | 'bind-off' | null): void {
+    const operation = shapePlans.value.find(plan => plan.shapeId === shapeId)?.instructions
+      .flatMap(instruction => instruction.operations ?? []).find(item => item.key === key)
+    if (!operation?.canOverride) return
+    const existing = operationOverrides.value[shapeId] ?? {}
+    if ((existing[key] ?? null) === kind) return
+    pushUndo(captureHistorySnapshot())
+    const next = { ...existing }
+    if (kind) next[key] = kind
+    else delete next[key]
+    operationOverrides.value = { ...operationOverrides.value, [shapeId]: next }
+  }
+
   function redo(): void {
     const next = redoStack.value.pop()
     if (!next) return
@@ -1081,6 +1106,8 @@ export const useEditorStore = defineStore('editor', () => {
     zoom,
     cardPositions,
     setCardPosition,
+    operationOverrides,
+    setOperationOverride,
     minimumViewZoom,
     projectOpenRevision,
     direction,

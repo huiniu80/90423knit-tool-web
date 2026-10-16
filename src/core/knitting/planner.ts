@@ -1,4 +1,6 @@
 import type { RasterRow, StitchSegment } from '../raster/raster.types'
+import { buildRowOperations, rowOperationToText } from './rowOperations'
+import type { OperationOverrides } from './rowOperations'
 import type {
   EdgeShapingPlan,
   GarmentEdgeRole,
@@ -26,12 +28,13 @@ function activeSpan(rows: RasterRow[]): RasterRow[] {
 export function generateInstructions(
   rasterRows: RasterRow[],
   _direction: KnitDirection,
+  overrides: OperationOverrides = {},
 ): KnittingInstruction[] {
   const physicalRows = activeSpan(rasterRows)
   if (physicalRows.some((row) => !row.stitchCount || row.segments.length > 2)) return []
   const ordered = physicalRows
 
-  return ordered.map((row, index) => {
+  return buildRowOperations(ordered.map((row, index) => {
     const previous = index > 0 ? ordered[index - 1] : undefined
     const current = row.segments
     const before = previous?.segments ?? []
@@ -94,7 +97,7 @@ export function generateInstructions(
       centerChange,
       panelChanges,
     }
-  })
+  }), overrides)
 }
 
 function describeChange(side: string, value: number): string | null {
@@ -104,17 +107,23 @@ function describeChange(side: string, value: number): string | null {
 }
 
 export function instructionToText(instruction: KnittingInstruction): string {
+  if (instruction.conflict) return `第${instruction.rowNumber}行：${instruction.conflict}`
+  if (instruction.operations) {
+    const actions = instruction.operations.map(rowOperationToText)
+    const continuation = instruction.transition === 'split' || instruction.transition === 'cast-on-separated' ? '；之后左右两段分别继续编织' : instruction.transition === 'join' ? '；连接左右两段' : ''
+    return `第${instruction.rowNumber}行前：${actions.length ? actions.join('，') : '不加不减'}${continuation}`
+  }
   if (!instruction.supported) return `第${instruction.rowNumber}行：同时出现三块以上织片，需要手动确认结构`
   if (instruction.transition === 'cast-on-separated') {
     const [left, right] = instruction.segments
     return `第${instruction.rowNumber}行：左片起${segmentStitchCount(left)}针，右片起${segmentStitchCount(right)}针，分开编织`
   }
-  if (instruction.isCastOn) return `第${instruction.rowNumber}行：下摆起${instruction.stitchCount}针`
+  if (instruction.isCastOn) return `第${instruction.rowNumber}行：起${instruction.stitchCount}针`
   if (instruction.stitchCount === 0) return `第${instruction.rowNumber}行：断开编织区域`
 
   if (instruction.transition === 'split') {
     const [left, right] = instruction.segments
-    return `第${instruction.rowNumber}行：织左肩${segmentStitchCount(left)}针，中间收${Math.abs(instruction.centerChange)}针，织右肩${segmentStitchCount(right)}针；之后左右肩分开编织`
+    return `第${instruction.rowNumber}行前：左段${segmentStitchCount(left)}针，中间平收${Math.abs(instruction.centerChange)}针，右段${segmentStitchCount(right)}针；之后左右两段分开编织`
   }
   if (instruction.transition === 'join') {
     return `第${instruction.rowNumber}行：中间加起${instruction.centerChange}针，连接左右织片`
@@ -122,15 +131,15 @@ export function instructionToText(instruction: KnittingInstruction): string {
 
   if (instruction.segments.length === 2) {
     const labels = instruction.panelChanges.flatMap((change) => {
-      const panel = change.panel === 'left-shoulder' ? '左肩' : '右肩'
-      const leftEdge = change.panel === 'left-shoulder' ? '外侧' : '领口侧'
-      const rightEdge = change.panel === 'left-shoulder' ? '领口侧' : '外侧'
+      const panel = change.panel === 'left-shoulder' ? '左段' : '右段'
+      const leftEdge = '左侧'
+      const rightEdge = '右侧'
       return [
         describeChange(`${panel}${leftEdge}`, change.leftChange),
         describeChange(`${panel}${rightEdge}`, change.rightChange),
       ].filter((value): value is string => Boolean(value))
     })
-    return `第${instruction.rowNumber}行：${labels.length ? labels.join('，') : '左右肩均不加不减'}`
+    return `第${instruction.rowNumber}行：${labels.length ? labels.join('，') : '左右段均不加不减'}`
   }
 
   const changes = [
@@ -146,8 +155,8 @@ function segmentStitchCount(segment: StitchSegment | undefined): number {
 
 const garmentEdgeLabels: Record<GarmentEdgeRole, string> = {
   'left-outer': '左外侧边界',
-  'left-neck': '左肩领口侧',
-  'right-neck': '右肩领口侧',
+  'left-neck': '左段右侧',
+  'right-neck': '右段左侧',
   'right-outer': '右外侧边界',
 }
 
@@ -220,8 +229,12 @@ export function generateGarmentEdgeShapingSequence(
     : 0
 
   for (const instruction of instructions) {
-    const change = garmentEdgeChange(instruction, edge)
+    const rowOperation = instruction.operations?.find(operation => operation.edge === edge && operation.kind !== 'cast-on')
+    const change = instruction.operations
+      ? rowOperation ? (rowOperation.kind === 'increase' ? rowOperation.count : -rowOperation.count) : 0
+      : garmentEdgeChange(instruction, edge)
     if (!change) continue
+    const technique = rowOperation?.kind === 'bind-off' ? 'bind-off' : change > 0 ? 'increase' : 'decrease'
     const operation: ShapingOperation = change > 0 ? 'increase' : 'decrease'
     const everyRows = instruction.rowNumber - previousChangeRow
     const previousStep = sequence.at(-1)
@@ -230,6 +243,7 @@ export function generateGarmentEdgeShapingSequence(
       && previousStep.operation === operation
       && previousStep.everyRows === everyRows
       && previousStep.stitchCount === Math.abs(change)
+      && previousStep.technique === technique
     ) {
       previousStep.repeatCount += 1
       previousStep.endRowNumber = instruction.rowNumber
@@ -247,6 +261,7 @@ export function generateGarmentEdgeShapingSequence(
         stitchCount: Math.abs(change),
         repeatCount: 1,
         operation,
+        technique,
       })
     }
     previousChangeRow = instruction.rowNumber
@@ -259,7 +274,7 @@ export function stepNumberLabel(order: number): string {
 }
 
 export function shapingSequenceStepToText(step: ShapingSequenceStep): string {
-  const operation = step.operation === 'increase' ? '加' : '减'
+  const operation = step.technique === 'bind-off' ? '平收' : step.operation === 'increase' ? '加' : '减'
   const range = step.startRowNumber === step.endRowNumber
     ? `第 ${step.startRowNumber} 行`
     : `第 ${step.startRowNumber}–${step.endRowNumber} 行`

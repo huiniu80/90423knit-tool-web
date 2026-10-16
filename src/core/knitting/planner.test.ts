@@ -60,7 +60,7 @@ describe('Knitting Planner', () => {
     const empty: RasterRow = { rowIndex: 0, yCm: 0.5, segments: [], stitchCount: 0 }
     const result = generateInstructions([empty, row(1, 2, 4), { ...empty, rowIndex: 2 }], 'bottom-up')
     expect(result).toHaveLength(1)
-    expect(instructionToText(result[0]!)).toBe('第1行：下摆起3针')
+    expect(instructionToText(result[0]!)).toBe('第1行前：左侧起针 3 针（针号 3–5）')
   })
 
   it('从两块织片起针时生成分开编织指令', () => {
@@ -73,7 +73,8 @@ describe('Knitting Planner', () => {
     const result = generateInstructions([multiple], 'bottom-up')
     expect(result[0]?.supported).toBe(true)
     expect(result[0]?.transition).toBe('cast-on-separated')
-    expect(instructionToText(result[0]!)).toContain('左片起3针，右片起3针')
+    expect(instructionToText(result[0]!)).toContain('左侧起针 3 针')
+    expect(instructionToText(result[0]!)).toContain('右侧起针 3 针')
   })
 
   it('按单侧边界生成连续的 x-y-z 减针阶段', () => {
@@ -161,9 +162,9 @@ describe('Knitting Planner', () => {
     const instructions = generateInstructions(rows, 'bottom-up')
 
     expect(instructions[1]).toMatchObject({ transition: 'split', centerChange: -1 })
-    expect(instructionToText(instructions[1]!)).toContain('中间收1针')
-    expect(instructionToText(instructions[2]!)).toContain('左肩领口侧减1针')
-    expect(instructionToText(instructions[2]!)).toContain('右肩领口侧减1针')
+    expect(instructionToText(instructions[1]!)).toContain('中间平收 1 针')
+    expect(instructionToText(instructions[2]!)).toContain('左段右侧减针 1 针')
+    expect(instructionToText(instructions[2]!)).toContain('右段左侧减针 1 针')
     expect(generateGarmentEdgeShapingPlan(instructions, 'left-neck').rules).toEqual([
       { everyRows: 1, stitchCount: 1, repeatCount: 1, operation: 'decrease' },
     ])
