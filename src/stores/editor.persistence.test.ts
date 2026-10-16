@@ -84,6 +84,14 @@ function libraryFixture(): PersistedProjectLibrary {
 afterEach(() => vi.useRealTimers())
 
 describe('编辑器本地持久化', () => {
+  it('兼容缺少卡片位置的旧文档并拒绝非有限位置', () => {
+    const storage = new MemoryStorage()
+    const document = documentFixture()
+    storage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(document))
+    expect(loadEditorDocument(storage)?.cardPositions).toBeUndefined()
+    storage.setItem(EDITOR_STORAGE_KEY, JSON.stringify({ ...document, cardPositions: { 'front-piece:0': { x: 'bad', y: 2 } } }))
+    expect(loadEditorDocument(storage)).toBeNull()
+  })
   it.each(['inside', 'outside'] as const)('旧 %s 策略迁移不修改轮廓，并保留待展示提示', (mode) => {
     const storage = new MemoryStorage()
     const original = { ...documentFixture(), rasterOptions: { mode, symmetryOptimization: false } }

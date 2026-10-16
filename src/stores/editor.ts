@@ -168,6 +168,7 @@ export const useEditorStore = defineStore('editor', () => {
     validInitialSelection(persistedDocument?.selectedPlanShapeId ?? selectedShapeId.value),
   )
   const zoom = ref(20)
+  const cardPositions = ref<Record<string, Point>>(clonePlain(persistedDocument.cardPositions ?? {}))
   const minimumViewZoom = ref(5)
   const projectOpenRevision = ref(0)
   const shapeDirections = ref<Record<string, KnitDirection>>(
@@ -379,6 +380,7 @@ export const useEditorStore = defineStore('editor', () => {
       shapeRoundingPolicies: validRoundingPolicies,
       rasterOptions: clonePlain(rasterOptions.value),
       viewMode: viewMode.value,
+      cardPositions: Object.fromEntries(Object.entries(cardPositions.value).filter(([key]) => shapeIds.has(key.slice(0, key.lastIndexOf(':'))))),
       selectedShapeId: validSelection(selectedShapeId.value),
       selectedPlanShapeId: validSelection(selectedPlanShapeId.value),
     }
@@ -418,6 +420,7 @@ export const useEditorStore = defineStore('editor', () => {
       selectedShapeId,
       selectedPlanShapeId,
       shapesRevision,
+      cardPositions,
     ],
     autoSave.schedule,
     { deep: true },
@@ -787,6 +790,7 @@ export const useEditorStore = defineStore('editor', () => {
     shapeRoundingPolicies.value = clonePlain(document.shapeRoundingPolicies ?? {})
     rasterOptions.value = clonePlain(document.rasterOptions)
     viewMode.value = document.viewMode ?? 'overlay'
+    cardPositions.value = clonePlain(document.cardPositions ?? {})
     selectedShapeId.value = validSelection(document.selectedShapeId)
     selectedPlanShapeId.value = validSelection(document.selectedPlanShapeId)
       ?? selectedShapeId.value
@@ -979,6 +983,18 @@ export const useEditorStore = defineStore('editor', () => {
     restoreHistorySnapshot(previous)
   }
 
+  function setCardPosition(key: string, point: Point | null): void {
+    if (!/^.+:\d+$/.test(key)) return
+    const shapeId = key.slice(0, key.lastIndexOf(':'))
+    if (!shapes.value.some((shape) => shape.id === shapeId)) return
+    const next = { ...cardPositions.value }
+    if (point) {
+      if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return
+      next[key] = { ...point }
+    } else delete next[key]
+    cardPositions.value = next
+  }
+
   function redo(): void {
     const next = redoStack.value.pop()
     if (!next) return
@@ -1004,6 +1020,8 @@ export const useEditorStore = defineStore('editor', () => {
     selectedShapeId,
     selectedPlanShapeId,
     zoom,
+    cardPositions,
+    setCardPosition,
     minimumViewZoom,
     projectOpenRevision,
     direction,

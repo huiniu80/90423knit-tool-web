@@ -27,6 +27,8 @@ export interface PersistedEditorDocument {
   rasterRuleNoticePending?: boolean
   /** Optional for compatibility with projects saved before display-mode persistence. */
   viewMode?: ViewMode
+  /** Manual card positions relative to the canvas bottom-left origin, in centimeters. */
+  cardPositions?: Record<string, Point>
   selectedShapeId: string | null
   selectedPlanShapeId: string | null
 }
@@ -170,6 +172,7 @@ export function isPersistedEditorDocument(value: unknown): value is PersistedEdi
     || !isShapeDirections(value.shapeDirections)
     || !isShapeRoundingPolicies(value.shapeRoundingPolicies)
     || !isRasterOptions(value.rasterOptions)
+    || (value.cardPositions !== undefined && (!isRecord(value.cardPositions) || !Object.entries(value.cardPositions).every(([key, point]) => /^.+:\d+$/.test(key) && isPoint(point))))
     || (value.rasterRuleNoticePending !== undefined && typeof value.rasterRuleNoticePending !== 'boolean')
     || (value.viewMode !== undefined
       && value.viewMode !== 'outline'

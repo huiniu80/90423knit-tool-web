@@ -51,11 +51,12 @@ import { layoutMarkersGlobally } from './markerLayout'
 import type { LineObstacle } from './markerLayout'
 import { deleteEditableNode, insertEdgeNode, nearestEditableEdge } from './nodeEditing'
 import type { SelectedEdge } from './nodeEditing'
+import { cardFromScreen, cardToScreen } from './cardCoordinates'
 
 type Corner = 'nw' | 'ne' | 'se' | 'sw'
 type Interaction =
   | { kind: 'pan'; start: Point; origin: Point }
-  | { kind: 'annotation-drag'; key: string; start: Point; origin: Point }
+  | { kind: 'annotation-drag'; key: string; start: Point; origin: Point; previousPosition?: Point }
   | { kind: 'move'; start: Point; shape: Shape }
   | { kind: 'resize'; corner: Corner; anchor: Point; shape: Shape }
   | { kind: 'point'; pointIndex: number; shape: PolygonShape }
@@ -168,7 +169,7 @@ const exportingCanvas = ref(false)
 const displayedShapes = computed(() => exportingCanvas.value
   ? shapes.value.filter((shape) => shapePlans.value.find((plan) => plan.shapeId === shape.id)?.canExport)
   : shapes.value)
-const pinnedAnnotationPositions = ref<Record<string, Point>>({})
+const pinnedAnnotationPositions = ref<Record<string, Point>>(clonePlain(store.cardPositions))
 const annotationHovered = ref(false)
 const annotationDragHovered = ref(false)
 const canvasBackgroundHovered = ref(false)
@@ -354,10 +355,10 @@ function annotationHeaderHeight(
   isPinned = false,
   forExport = exportingCanvas.value,
 ): number {
-  const reservedControlWidth = forExport ? 0 : 42 + (isPinned ? 38 : 0)
+  const reservedControlWidth = forExport ? 0 : 42 + (isPinned ? 48 : 0)
   const titleWidth = annotationWidth - annotationPaddingX * 2 - 20 - reservedControlWidth
   return Math.max(
-    42,
+    isPinned ? 48 : 42,
     annotationTextHeight(model.lines[0] ?? '', titleWidth, 11, 'bold') + annotationHeaderPaddingY * 2,
   )
 }
@@ -663,7 +664,8 @@ const shapingAnnotations = computed<ShapingAnnotation[]>(() => {
         bodyY += height
         return line
       })
-      const saved = exportingCanvas.value ? undefined : pinnedAnnotationPositions.value[annotation.key]
+      const stored = exportingCanvas.value ? undefined : pinnedAnnotationPositions.value[annotation.key]
+      const saved = stored ? cardToScreen(stored, pan.value, zoom.value, fabric.value.heightCm) : undefined
       const x = saved
         ? clamp(saved.x, annotationViewportMargin, stageSize.value.width - annotation.width - annotationViewportMargin)
         : annotation.x
@@ -1170,6 +1172,7 @@ function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
       key: annotation.key,
       start: pointer,
       origin: { x: annotation.x, y: annotation.y },
+      previousPosition: pinnedAnnotationPositions.value[annotation.key],
     }
     return
   }
@@ -1331,7 +1334,7 @@ function applyInteractionMove(pointer: Point, directionSnap = true): void {
     if (!annotation) return
     pinnedAnnotationPositions.value = {
       ...pinnedAnnotationPositions.value,
-      [current.key]: {
+      [current.key]: cardFromScreen({
         x: clamp(
           current.origin.x + pointer.x - current.start.x,
           annotationViewportMargin,
@@ -1342,7 +1345,7 @@ function applyInteractionMove(pointer: Point, directionSnap = true): void {
           annotationViewportMargin,
           stageSize.value.height - annotation.height - annotationViewportMargin,
         ),
-      },
+      }, pan.value, zoom.value, fabric.value.heightCm),
     }
     return
   }
@@ -1481,6 +1484,12 @@ function cancelInteraction(): void {
   interactionFrameId = null
   pendingInteractionPointer = null
   store.cancelShapeMutation()
+  if (interaction.value?.kind === 'annotation-drag') {
+    const next = { ...pinnedAnnotationPositions.value }
+    if (interaction.value.previousPosition) next[interaction.value.key] = interaction.value.previousPosition
+    else delete next[interaction.value.key]
+    pinnedAnnotationPositions.value = next
+  }
   interaction.value = null
   contentPointerId = null
   activePenPointerId = null
@@ -1500,6 +1509,9 @@ function onLostPointerCapture(event: PointerEvent): void {
 
 function endInteraction(): void {
   flushInteractionMove()
+  if (interaction.value?.kind === 'annotation-drag' && pointerMoved) {
+    store.setCardPosition(interaction.value.key, pinnedAnnotationPositions.value[interaction.value.key] ?? null)
+  }
   if (
     interaction.value
     && interaction.value.kind !== 'pan'
@@ -1536,6 +1548,7 @@ function onPointerEnd(event: KonvaEventObject<PointerEvent>): void {
       const next = { ...pinnedAnnotationPositions.value }
       delete next[reset.key]
       pinnedAnnotationPositions.value = next
+      store.setCardPosition(reset.key, null)
     } else if (dimension) store.setShapeRoundingDirection(dimension.shapeId, dimension.axis, dimension.direction)
     else if (!suppressNextStageClick) onStagePointerClick(event)
   }
@@ -1768,13 +1781,18 @@ async function exportCanvas(): Promise<void> {
   const previousStageSize = { ...stageSize.value }
   const previousZoom = zoom.value
   const previousPan = { ...pan.value }
-  const expandedHeights = annotationModels.value.map((model) => ({
-    side: model.side,
-    height: expandedAnnotationHeight(model),
-  }))
+  const expandedHeights = viewMode.value === 'overlay'
+    ? dimensionLabels.value
+      .filter(label => shapePlans.value.find(plan => plan.shapeId === label.result.shapeId)?.canExport)
+      .map(label => ({ side: label.side, height: label.height }))
+    : annotationModels.value.map((model) => ({
+      side: model.side,
+      height: expandedAnnotationHeight(model),
+    }))
   const exportLayout = createCanvasExportLayout({
     fabricWidthCm: fabric.value.widthCm,
     fabricHeightCm: fabric.value.heightCm,
+    annotationWidth: viewMode.value === 'overlay' ? 280 : annotationWidth,
     leftAnnotationHeights: expandedHeights
       .filter((annotation) => annotation.side === 'left')
       .map((annotation) => annotation.height),
@@ -2126,7 +2144,7 @@ defineExpose({ fitCanvas, exportCanvas })
               x: annotationPaddingX + 20,
               y: annotationHeaderPaddingY,
               width: annotation.width - annotationPaddingX * 2 - 20
-                - (exportingCanvas ? 0 : 42 + (annotation.isPinned ? 38 : 0)),
+                - (exportingCanvas ? 0 : 42 + (annotation.isPinned ? 48 : 0)),
               height: annotation.headerHeight - annotationHeaderPaddingY * 2,
               text: annotation.lines[0], fill: annotationLineColor(annotation.lines[0] ?? '', 0),
               fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
@@ -2144,14 +2162,14 @@ defineExpose({ fitCanvas, exportCanvas })
                 fontStyle: annotationLineIsBold(line.text, lineIndex + 1) ? 'bold' : 'normal',
                 lineHeight: 1.35, verticalAlign: 'top', listening: false,
               }" />
-            <v-group v-if="annotation.isPinned && !exportingCanvas" :config="{ x: annotation.width - 78, y: 4 }">
+            <v-group v-if="annotation.isPinned && !exportingCanvas" :config="{ x: annotation.width - 88, y: 2 }">
               <v-rect :config="{
                 name: `outline-reset:${annotation.shapeId}|${annotation.segmentIndex}`,
-                width: 34, height: 34, fill: '#f0ece4', cornerRadius: 7,
+                width: 44, height: 44, fill: '#f0ece4', cornerRadius: 7,
                 stroke: '#d4cabd', strokeWidth: 1,
               }" />
               <v-text :config="{
-                x: 0, y: 7, width: 34, height: 20, text: '↺', align: 'center',
+                x: 0, y: 12, width: 44, height: 20, text: '↺', align: 'center',
                 verticalAlign: 'middle', fill: '#52645d', fontSize: 15, listening: false,
               }" />
             </v-group>

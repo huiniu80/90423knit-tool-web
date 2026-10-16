@@ -3,6 +3,7 @@ export interface CanvasExportLayoutInput {
   fabricHeightCm: number
   leftAnnotationHeights: number[]
   rightAnnotationHeights: number[]
+  annotationWidth?: number
 }
 
 export interface CanvasExportLayout {
@@ -46,7 +47,7 @@ function safePixelRatio(width: number, height: number): number {
 }
 
 export function createCanvasExportLayout(input: CanvasExportLayoutInput): CanvasExportLayout {
-  const reservedWidth = (ANNOTATION_MARGIN + ANNOTATION_WIDTH + ANNOTATION_FABRIC_GAP) * 2
+  const reservedWidth = (ANNOTATION_MARGIN + (input.annotationWidth ?? ANNOTATION_WIDTH) + ANNOTATION_FABRIC_GAP) * 2
   const width = Math.ceil(Math.max(BASE_WIDTH, input.fabricWidthCm * MIN_ZOOM + reservedWidth))
   const zoom = clamp((width - reservedWidth) / input.fabricWidthCm, MIN_ZOOM, MAX_ZOOM)
   const fabricWidth = input.fabricWidthCm * zoom

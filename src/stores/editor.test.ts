@@ -29,6 +29,37 @@ function stubBrowser(storage: MemoryStorage): void {
 }
 
 describe('Editor Store', () => {
+  it('手工卡片随方案和文件保存，排版不占历史，恢复自动清除记录', async () => {
+    vi.useFakeTimers()
+    const storage = new MemoryStorage()
+    stubBrowser(storage)
+    const store = useEditorStore()
+    store.addDefaultShape('rectangle')
+    const shapeId = store.selectedShapeId!
+    const key = `${shapeId}:0`
+    store.setCardPosition(key, { x: -20, y: 500 })
+    await nextTick()
+    vi.advanceTimersByTime(300)
+    expect(store.createProjectExport()!.project.document.cardPositions).toEqual({ [key]: { x: -20, y: 500 } })
+    store.$dispose()
+    setActivePinia(createPinia())
+    const restored = useEditorStore()
+    expect(restored.cardPositions[key]).toEqual({ x: -20, y: 500 })
+    restored.setCardPosition(key, null)
+    expect(restored.cardPositions[key]).toBeUndefined()
+    expect(restored.canUndo).toBe(false)
+    restored.setCardPosition(key, { x: 1, y: 2 })
+    const firstId = restored.activeProjectId
+    restored.createProject()
+    expect(restored.cardPositions).toEqual({})
+    restored.activateProject(firstId)
+    expect(restored.cardPositions[key]).toEqual({ x: 1, y: 2 })
+    restored.deleteSelected()
+    expect(restored.createProjectExport()!.project.document.cardPositions).toEqual({})
+    restored.undo()
+    expect(restored.cardPositions[key]).toEqual({ x: 1, y: 2 })
+    restored.$dispose()
+  })
   it('自动最近整数与手工覆盖保存一致，上游重算保留方向且拒绝零候选', async () => {
     vi.useFakeTimers()
     const storage = new MemoryStorage()
