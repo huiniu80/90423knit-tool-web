@@ -12,6 +12,8 @@ export const PROJECT_LIBRARY_STORAGE_KEY = 'knitting-pattern-planner:projects:v1
 export const EDITOR_DOCUMENT_VERSION = 3
 export const PROJECT_LIBRARY_VERSION = 1
 export const MAX_PROJECTS = 5
+export const MAX_RECYCLED_PROJECTS = 5
+export const RECYCLE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 export const EDITOR_AUTOSAVE_DELAY_MS = 300
 
 export interface PersistedEditorDocument {
@@ -45,6 +47,19 @@ export interface PersistedProjectLibrary {
   version: typeof PROJECT_LIBRARY_VERSION
   activeProjectId: string
   projects: PersistedProject[]
+  recycleBin?: RecycledProject[]
+}
+
+export interface RecycledProject {
+  id: string
+  movedAt: string
+  reason: 'delete' | 'replace'
+  project: PersistedProject
+}
+
+export function retainedRecycledProjects(records: RecycledProject[], now = Date.now()): RecycledProject[] {
+  return records.filter(record => now - Date.parse(record.movedAt) < RECYCLE_RETENTION_MS)
+    .sort((a, b) => b.movedAt.localeCompare(a.movedAt)).slice(0, MAX_RECYCLED_PROJECTS)
 }
 
 export interface EditorStorage {
@@ -295,7 +310,22 @@ export function loadProjectLibrary(
   const activeProjectId = projects.some((project) => project.id === requestedActiveId)
     ? requestedActiveId
     : [...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0].id
-  return { version: PROJECT_LIBRARY_VERSION, activeProjectId, projects }
+  const recycleBin: RecycledProject[] = []
+  const seenRecords = new Set<string>()
+  if (Array.isArray(value.recycleBin)) {
+    for (const record of value.recycleBin) {
+      if (!isRecord(record) || typeof record.id !== 'string' || !record.id || seenRecords.has(record.id)
+        || !isValidTimestamp(record.movedAt) || (record.reason !== 'delete' && record.reason !== 'replace')
+        || !isRecord(record.project)) continue
+      const document = migrateEditorDocument(record.project.document)
+      const project = { ...record.project, document }
+      if (!isPersistedProject(project)) continue
+      seenRecords.add(record.id)
+      recycleBin.push({ id: record.id, movedAt: record.movedAt, reason: record.reason, project })
+    }
+  }
+  return { version: PROJECT_LIBRARY_VERSION, activeProjectId, projects,
+    ...(value.recycleBin !== undefined ? { recycleBin: retainedRecycledProjects(recycleBin) } : {}) }
 }
 
 export function saveProjectLibrary(

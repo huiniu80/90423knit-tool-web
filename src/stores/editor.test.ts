@@ -29,6 +29,93 @@ function stubBrowser(storage: MemoryStorage): void {
 }
 
 describe('Editor Store', () => {
+  it('删除与替换保留最新完整源数据，恢复满额明确替换且两侧一次保存', () => {
+    vi.useFakeTimers()
+    const storage = new MemoryStorage()
+    stubBrowser(storage)
+    const store = useEditorStore()
+    store.addDefaultShape('rectangle')
+    const sourceId = store.activeProjectId
+    store.setCardPosition(`${store.selectedShapeId}:0`, { x: 2, y: 3 })
+    const original = store.createProjectExport()!.project.document
+    store.createProject()
+    expect(store.deleteProject(sourceId)).toBe(true)
+    expect(store.recycledProjects[0]?.project.document).toEqual(original)
+    for (let index = 0; index < 4; index++) store.createProject()
+    const recordId = store.recycledProjects[0]!.id
+    expect(store.restoreRecycledProject(recordId).status).toBe('capacity')
+    const replaced = store.projects[0]!
+    const writes = vi.spyOn(storage, 'setItem')
+    expect(store.restoreRecycledProject(recordId, replaced.id).status).toBe('imported')
+    expect(store.projects).toHaveLength(5)
+    expect(store.shapes).toEqual(original.shapes)
+    expect(store.cardPositions).toEqual(original.cardPositions)
+    expect(store.recycledProjects.some(item => item.id === recordId)).toBe(false)
+    expect(store.recycledProjects[0]?.project.id).toBe(replaced.id)
+    const finalLibrary = JSON.parse(writes.mock.calls.at(-1)![1])
+    expect(finalLibrary.projects.some((item: { id: string }) => item.id === replaced.id)).toBe(false)
+    expect(finalLibrary.recycleBin[0].project.id).toBe(replaced.id)
+    expect(store.canUndo).toBe(false)
+    store.$dispose()
+  })
+
+  it('回收站最多五份、三十天边界和刷新恢复一致，永久清除独立于历史', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-16T00:00:00Z'))
+    const storage = new MemoryStorage()
+    stubBrowser(storage)
+    const store = useEditorStore()
+    const firstId = store.activeProjectId
+    for (let index = 0; index < 6; index++) {
+      vi.advanceTimersByTime(1000)
+      store.replaceProject(store.activeProjectId)
+    }
+    expect(store.recycledProjects).toHaveLength(5)
+    expect(store.recycledProjects.some(item => item.project.id === firstId)).toBe(false)
+    store.$dispose()
+    setActivePinia(createPinia())
+    const restored = useEditorStore()
+    expect(restored.recycledProjects).toHaveLength(5)
+    const newestId = restored.recycledProjects[0]!.id
+    vi.advanceTimersByTime(30 * 24 * 60 * 60 * 1000)
+    restored.refreshRecycleBin()
+    expect(restored.recycledProjects).toHaveLength(0)
+    expect(restored.restoreRecycledProject(newestId).status).toBe('not-found')
+    expect(restored.removeRecycledProject()).toBe(true)
+    expect(JSON.parse(storage.getItem(PROJECT_LIBRARY_STORAGE_KEY)!).recycleBin).toEqual([])
+    restored.$dispose()
+  })
+
+  it('第二次写入失败不改变删除替换恢复两侧数据，仍能导出最新内容', () => {
+    vi.useFakeTimers()
+    const storage = new MemoryStorage()
+    stubBrowser(storage)
+    const store = useEditorStore()
+    store.createProject()
+    store.replaceProject(store.activeProjectId)
+    const ids = store.projects.map(item => item.id)
+    const recordId = store.recycledProjects[0]!.id
+    const originalRecords = JSON.stringify(store.recycledProjects)
+    const originalWrite = storage.setItem.bind(storage)
+    let writes = 0
+    vi.spyOn(storage, 'setItem').mockImplementation((key, value) => {
+      if (++writes % 2 === 0) throw Error('写入失败')
+      originalWrite(key, value)
+    })
+    expect(store.deleteProject(ids[0]!)).toBe(false)
+    expect(store.replaceProject(ids[0]!)).toBeNull()
+    expect(store.restoreRecycledProject(recordId).status).toBe('storage-error')
+    expect(store.removeRecycledProject(recordId)).toBe(false)
+    expect(store.renameProject(ids[0]!, '不可保存')).toBe(false)
+    expect(store.projects.map(item => item.id)).toEqual(ids)
+    expect(JSON.stringify(store.recycledProjects)).toBe(originalRecords)
+    storage.failWrites = true
+    store.addDefaultShape('triangle')
+    expect(store.createProjectExport()!.project.document.shapes[0]?.type).toBe('triangle')
+    expect(store.storageStatus).toBe('error')
+    store.$dispose()
+  })
+
   it('手工卡片随方案和文件保存，排版不占历史，恢复自动清除记录', async () => {
     vi.useFakeTimers()
     const storage = new MemoryStorage()

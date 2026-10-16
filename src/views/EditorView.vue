@@ -88,7 +88,6 @@ onBeforeUnmount(() => {
           <span>当前方案</span>
           <strong>{{ activeProject?.name ?? '未命名方案' }}</strong>
         </div>
-        <span v-if="storageStatus === 'error'" class="storage-error" role="status">本地保存失败</span>
         <button class="library-button" type="button" @click="openLibrary(false)">
           我的方案库 <b>{{ projects.length }}/{{ store.maxProjects }}</b>
         </button>
@@ -97,6 +96,10 @@ onBeforeUnmount(() => {
         </button>
       </div>
     </header>
+    <div v-if="storageStatus === 'error'" class="storage-backup-alert" role="alert">
+      <span>保存失败，请立即导出备份</span>
+      <button type="button" @click="openLibrary(false)">打开方案库导出备份</button>
+    </div>
 
     <main :class="['editor-main', { 'sidebar-collapsed': !sidebarExpanded, 'portrait-layout': portraitLayout }]">
       <button v-if="portraitLayout && sidebarExpanded" class="sidebar-backdrop" type="button" aria-label="关闭参数栏" @click="toggleSidebar" />

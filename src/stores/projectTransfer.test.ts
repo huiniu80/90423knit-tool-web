@@ -33,6 +33,13 @@ function projectFixture(): PersistedProject {
 }
 
 describe('编织方案文件', () => {
+  it('旧文件升级有说明，新文件往返不假报升级', () => {
+    const current = createProjectFile(projectFixture())
+    expect(parseProjectFile(serializeProjectFile(current))).toEqual({ ok: true, file: current })
+    const old = { ...current, version: 1 }
+    const parsed = parseProjectFile(JSON.stringify(old))
+    expect(parsed.ok && parsed.upgraded).toBe(true)
+  })
   it('旧方向安全迁移为自下而上，轮廓与取整覆盖保持不变', () => {
     const project = projectFixture()
     const legacy = createProjectFile(project)

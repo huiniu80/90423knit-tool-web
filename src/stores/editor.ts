@@ -37,12 +37,14 @@ import {
   removeLegacyEditorDocument,
   saveProjectLibrary,
   migrateEditorDocument,
+  retainedRecycledProjects,
 } from './editor.persistence'
 import type {
   PageLifecycleTarget,
   PersistedEditorDocument,
   PersistedProject,
   PersistedProjectLibrary,
+  RecycledProject,
 } from './editor.persistence'
 import { createProjectFile } from './projectTransfer'
 import type { ExportedProjectFileV1 } from './projectTransfer'
@@ -144,6 +146,12 @@ export const useEditorStore = defineStore('editor', () => {
     projects: [initialProject],
   }
   const projects = ref<PersistedProject[]>(clonePlain(initialLibrary.projects))
+  const recycleBin = ref<RecycledProject[]>(clonePlain(initialLibrary.recycleBin ?? []))
+  const recycleClock = ref(Date.now())
+  const recycledProjects = computed(() => retainedRecycledProjects(recycleBin.value, recycleClock.value))
+  function refreshRecycleBin(): void { recycleClock.value = Date.now() }
+  const recycleTimer = setInterval(refreshRecycleBin, 60_000)
+  onScopeDispose(() => clearInterval(recycleTimer))
   const activeProjectId = ref(initialLibrary.activeProjectId)
   const activeInitialProject = projects.value.find(
     (project) => project.id === activeProjectId.value,
@@ -397,6 +405,7 @@ export const useEditorStore = defineStore('editor', () => {
       version: PROJECT_LIBRARY_VERSION,
       activeProjectId: activeProjectId.value,
       projects: clonePlain(projects.value),
+      recycleBin: retainedRecycledProjects(recycleBin.value),
     }
   }
 
@@ -799,16 +808,6 @@ export const useEditorStore = defineStore('editor', () => {
     projectOpenRevision.value += 1
   }
 
-  function saveLibraryNow(): boolean {
-    const saved = saveProjectLibrary({
-      version: PROJECT_LIBRARY_VERSION,
-      activeProjectId: activeProjectId.value,
-      projects: clonePlain(projects.value),
-    }, storage)
-    storageStatus.value = saved ? 'saved' : 'error'
-    return saved
-  }
-
   function nextProjectName(): string {
     const names = new Set(projects.value.map((project) => project.name))
     let index = 1
@@ -859,27 +858,34 @@ export const useEditorStore = defineStore('editor', () => {
     }
   }
 
-  function persistAndActivateProjects(nextProjects: PersistedProject[], project: PersistedProject): boolean {
+  function persistAndActivateProjects(nextProjects: PersistedProject[], project: PersistedProject, nextRecycleBin = retainedRecycledProjects(recycleBin.value)): boolean {
     const nextLibrary: PersistedProjectLibrary = {
       version: PROJECT_LIBRARY_VERSION,
       activeProjectId: project.id,
       projects: clonePlain(nextProjects),
+      recycleBin: clonePlain(nextRecycleBin),
     }
     if (!saveProjectLibrary(nextLibrary, storage)) {
       storageStatus.value = 'error'
       return false
     }
     projects.value = nextProjects
+    recycleBin.value = nextRecycleBin
     activeProjectId.value = project.id
     applyProjectDocument(project.document)
     storageStatus.value = 'saved'
     return true
   }
 
+  function moveToRecycle(project: PersistedProject, reason: RecycledProject['reason'], records = recycleBin.value): RecycledProject[] {
+    return retainedRecycledProjects([{ id: createId(), movedAt: new Date().toISOString(), reason, project: clonePlain(project) }, ...records])
+  }
+
   function createProjectExport(projectId = activeProjectId.value): ExportedProjectFileV1 | null {
     if (projectId === activeProjectId.value) autoSave.flush()
     const project = projects.value.find((item) => item.id === projectId)
-    return project ? createProjectFile(project) : null
+    return project ? createProjectFile(projectId === activeProjectId.value
+      ? { ...project, document: createPersistedDocument() } : project) : null
   }
 
   function importProject(file: ExportedProjectFileV1, discardDraft = false): ProjectImportResult {
@@ -908,8 +914,9 @@ export const useEditorStore = defineStore('editor', () => {
     if (!autoSave.flush()) return { status: 'storage-error' }
     const project = makeImportedProject(file, projectId)
     const nextProjects = clonePlain(projects.value)
+    const nextRecycleBin = moveToRecycle(nextProjects[index]!, 'replace')
     nextProjects.splice(index, 1, project)
-    return persistAndActivateProjects(nextProjects, project)
+    return persistAndActivateProjects(nextProjects, project, nextRecycleBin)
       ? { status: 'imported', projectId: project.id }
       : { status: 'storage-error' }
   }
@@ -937,18 +944,27 @@ export const useEditorStore = defineStore('editor', () => {
     if (!autoSave.flush()) return null
     const project = makeBlankProject()
     const nextProjects = clonePlain(projects.value)
+    const nextRecycleBin = moveToRecycle(nextProjects[index]!, 'replace')
     nextProjects.splice(index, 1, project)
-    return persistAndActivateProjects(nextProjects, project) ? project.id : null
+    return persistAndActivateProjects(nextProjects, project, nextRecycleBin) ? project.id : null
   }
 
   function renameProject(projectId: string, name: string): boolean {
     const trimmedName = name.trim()
     const project = projects.value.find((item) => item.id === projectId)
     if (!project || !trimmedName) return false
-    if (projectId === activeProjectId.value) autoSave.flush()
-    project.name = trimmedName
-    project.updatedAt = new Date().toISOString()
-    saveLibraryNow()
+    if (!autoSave.flush()) return false
+    const nextProjects = clonePlain(projects.value)
+    const next = nextProjects.find(item => item.id === projectId)!
+    next.name = trimmedName.slice(0, 40)
+    next.updatedAt = new Date().toISOString()
+    if (!saveProjectLibrary({ version: PROJECT_LIBRARY_VERSION, activeProjectId: activeProjectId.value,
+      projects: nextProjects, recycleBin: retainedRecycledProjects(recycleBin.value) }, storage)) {
+      storageStatus.value = 'error'
+      return false
+    }
+    projects.value = nextProjects
+    storageStatus.value = 'saved'
     return true
   }
 
@@ -959,16 +975,59 @@ export const useEditorStore = defineStore('editor', () => {
     if (projectId === activeProjectId.value && hasUnfinishedDraft.value && !discardDraft) return false
     if (!autoSave.flush()) return false
     const nextProjects = clonePlain(projects.value)
+    const nextRecycleBin = moveToRecycle(nextProjects[index]!, 'delete')
     nextProjects.splice(index, 1)
     if (projectId === activeProjectId.value) {
       const next = [...nextProjects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
-      return persistAndActivateProjects(nextProjects, next)
+      return persistAndActivateProjects(nextProjects, next, nextRecycleBin)
     }
-    if (!saveProjectLibrary({ version: PROJECT_LIBRARY_VERSION, activeProjectId: activeProjectId.value, projects: nextProjects }, storage)) {
+    if (!saveProjectLibrary({ version: PROJECT_LIBRARY_VERSION, activeProjectId: activeProjectId.value, projects: nextProjects, recycleBin: nextRecycleBin }, storage)) {
       storageStatus.value = 'error'
       return false
     }
     projects.value = nextProjects
+    recycleBin.value = nextRecycleBin
+    storageStatus.value = 'saved'
+    return true
+  }
+
+  function restoreRecycledProject(recordId: string, replacementId?: string, discardDraft = false): ProjectImportResult {
+    refreshRecycleBin()
+    const records = retainedRecycledProjects(recycleBin.value)
+    const record = records.find(item => item.id === recordId)
+    if (!record) return { status: 'not-found' }
+    const document = migrateEditorDocument(record.project.document)
+    if (!document) return { status: 'not-found' }
+    const assessment = assessGrid(document.gaugeInput, document.fabric)
+    if (assessment.status === 'blocked') return { status: 'grid-limit', assessment }
+    if (hasUnfinishedDraft.value && !discardDraft) return { status: 'draft' }
+    if (projects.value.length >= MAX_PROJECTS && !replacementId) return { status: 'capacity' }
+    const index = replacementId ? projects.value.findIndex(item => item.id === replacementId) : -1
+    if (replacementId && index < 0) return { status: 'not-found' }
+    if (!autoSave.flush()) return { status: 'storage-error' }
+    const project: PersistedProject = { ...clonePlain(record.project), id: createId(),
+      name: uniqueImportedProjectName(record.project.name, replacementId), document,
+      updatedAt: new Date().toISOString() }
+    const nextProjects = clonePlain(projects.value)
+    let nextRecycleBin = records.filter(item => item.id !== recordId)
+    if (index >= 0) {
+      nextRecycleBin = moveToRecycle(nextProjects[index]!, 'replace', nextRecycleBin)
+      nextProjects.splice(index, 1, project)
+    } else nextProjects.push(project)
+    return persistAndActivateProjects(nextProjects, project, nextRecycleBin)
+      ? { status: 'imported', projectId: project.id } : { status: 'storage-error' }
+  }
+
+  function removeRecycledProject(recordId?: string): boolean {
+    if (!autoSave.flush()) return false
+    const nextRecycleBin = recordId ? retainedRecycledProjects(recycleBin.value).filter(item => item.id !== recordId) : []
+    if (!saveProjectLibrary({ version: PROJECT_LIBRARY_VERSION, activeProjectId: activeProjectId.value,
+      projects: clonePlain(projects.value), recycleBin: nextRecycleBin }, storage)) {
+      storageStatus.value = 'error'
+      return false
+    }
+    recycleBin.value = nextRecycleBin
+    storageStatus.value = 'saved'
     return true
   }
 
@@ -1073,6 +1132,10 @@ export const useEditorStore = defineStore('editor', () => {
     createProjectExport,
     importProject,
     replaceWithImportedProject,
+    recycledProjects,
+    refreshRecycleBin,
+    restoreRecycledProject,
+    removeRecycledProject,
     undo,
     redo,
   }

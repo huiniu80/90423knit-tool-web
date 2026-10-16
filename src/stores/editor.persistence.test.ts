@@ -84,6 +84,19 @@ function libraryFixture(): PersistedProjectLibrary {
 afterEach(() => vi.useRealTimers())
 
 describe('编辑器本地持久化', () => {
+  it('回收站隔离损坏记录，旧库无记录兼容，正常方案仍保留', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-16T00:00:00Z'))
+    const storage = new MemoryStorage()
+    const library = libraryFixture()
+    const record = { id: 'record', movedAt: '2026-10-15T00:00:00Z', reason: 'delete', project: library.projects[0] }
+    storage.setItem(PROJECT_LIBRARY_STORAGE_KEY, JSON.stringify({ ...library, recycleBin: [record,
+      { ...record, id: 'expired', movedAt: '2026-09-16T00:00:00Z' },
+      { ...record, id: 'damaged', project: {} }, record] }))
+    const loaded = loadProjectLibrary(storage)!
+    expect(loaded.projects).toEqual(library.projects)
+    expect(loaded.recycleBin).toEqual([record])
+  })
   it('兼容缺少卡片位置的旧文档并拒绝非有限位置', () => {
     const storage = new MemoryStorage()
     const document = documentFixture()

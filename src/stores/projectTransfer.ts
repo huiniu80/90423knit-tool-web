@@ -15,7 +15,7 @@ export interface ExportedProjectFileV1 {
 }
 
 export type ProjectFileParseResult =
-  | { ok: true; file: ExportedProjectFileV1 }
+  | { ok: true; file: ExportedProjectFileV1; upgraded?: boolean }
   | { ok: false; reason: 'invalid-json' | 'invalid-file' | 'unsupported-version' }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -83,6 +83,7 @@ export function parseProjectFile(serialized: string): ProjectFileParseResult {
   if (!document || !hasConsistentDocumentReferences(document)) return { ok: false, reason: 'invalid-file' }
   return {
     ok: true,
+    ...((value.version !== PROJECT_FILE_VERSION || (isRecord(value.project.document) && value.project.document.version !== document.version)) ? { upgraded: true } : {}),
     file: {
       ...(value as unknown as ExportedProjectFileV1),
       version: PROJECT_FILE_VERSION,

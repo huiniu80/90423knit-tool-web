@@ -16,6 +16,8 @@ const editingName = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
 const pendingImport = ref<ExportedProjectFileV1 | null>(null)
 const transferMessage = ref('')
+const showingRecycleBin = ref(false)
+const pendingRestoreId = ref<string | null>(null)
 
 const importingAtCapacity = computed(() => pendingImport.value !== null)
 
@@ -46,6 +48,10 @@ watch(() => props.open, (open) => {
   if (!open) {
     pendingImport.value = null
     transferMessage.value = ''
+    pendingRestoreId.value = null
+    showingRecycleBin.value = false
+  } else {
+    store.refreshRecycleBin()
   }
 })
 
@@ -63,7 +69,7 @@ function openProject(projectId: string): void {
 
 function replaceWithBlank(project: PersistedProject): void {
   if (!confirmDiscardDraft()) return
-  if (!window.confirm(`“${project.name}”将被永久替换为空白方案，且不能撤销。继续吗？`)) return
+  if (!window.confirm(`“${project.name}”将移入回收站并替换为空白方案。回收站最多保留 5 份、最长 30 天。继续吗？`)) return
   if (store.replaceProject(project.id, true)) {
     emit('changed')
     emit('close')
@@ -83,16 +89,20 @@ function exportProject(project: PersistedProject): void {
     transferMessage.value = '导出失败：找不到该方案。'
     return
   }
-  const blob = new Blob([serializeProjectFile(file)], { type: 'application/json;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = `${safeFileName(project.name)}-${file.exportedAt.slice(0, 10)}.knitplan`
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  URL.revokeObjectURL(url)
-  transferMessage.value = `已导出“${project.name}”。`
+  try {
+    const blob = new Blob([serializeProjectFile(file)], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${safeFileName(project.name)}-${file.exportedAt.slice(0, 10)}.knitplan`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    transferMessage.value = `已发起“${project.name}”的下载，请妥善保存文件。`
+  } catch {
+    transferMessage.value = '导出失败，请重试。当前源数据仍在页面中。'
+  }
 }
 
 function importErrorMessage(reason: 'invalid-json' | 'invalid-file' | 'unsupported-version'): string {
@@ -134,6 +144,7 @@ async function importSelectedFile(event: Event): Promise<void> {
     transferMessage.value = importErrorMessage(parsed.reason)
     return
   }
+  if (parsed.upgraded) store.showNotice('旧方案已安全升级，原文件未修改。新导出的文件不保证可由旧版软件打开。')
 
   const importedAssessment = assessGrid(
     parsed.file.project.document.gaugeInput,
@@ -145,6 +156,8 @@ async function importSelectedFile(event: Event): Promise<void> {
   }
 
   transferMessage.value = ''
+  showingRecycleBin.value = false
+  pendingRestoreId.value = null
   if (store.projects.length >= store.maxProjects) {
     pendingImport.value = parsed.file
     return
@@ -155,7 +168,7 @@ async function importSelectedFile(event: Event): Promise<void> {
 
 function replaceWithImport(project: PersistedProject): void {
   if (!pendingImport.value || !confirmDiscardDraft()) return
-  if (!window.confirm(`“${project.name}”将被导入的“${pendingImport.value.project.name}”永久替换，且不能撤销。继续吗？`)) return
+  if (!window.confirm(`“${project.name}”将移入回收站并替换为“${pendingImport.value.project.name}”。继续吗？`)) return
   handleImportResult(store.replaceWithImportedProject(project.id, pendingImport.value, true))
 }
 
@@ -179,20 +192,44 @@ function finishRename(): void {
 function deleteProject(project: PersistedProject): void {
   if (store.projects.length <= 1) return
   if (project.id === store.activeProjectId && !confirmDiscardDraft()) return
-  if (!window.confirm(`确定删除“${project.name}”吗？此操作不能撤销。`)) return
+  if (!window.confirm(`将“${project.name}”移入回收站？最多保留 5 份、最长 30 天，不属于内容撤销。`)) return
   if (store.deleteProject(project.id, true)) emit('changed')
+}
+
+function restoreProject(recordId: string, replacement?: PersistedProject): void {
+  if (!confirmDiscardDraft()) return
+  if (replacement && !window.confirm(`“${replacement.name}”将移入回收站并替换为恢复的方案。继续吗？`)) return
+  const result = store.restoreRecycledProject(recordId, replacement?.id, true)
+  if (result.status === 'capacity') {
+    pendingRestoreId.value = recordId
+    showingRecycleBin.value = false
+    return
+  }
+  if (result.status === 'imported') {
+    emit('changed')
+    emit('close')
+  } else if (result.status === 'not-found') {
+    pendingRestoreId.value = null
+    transferMessage.value = '记录已到期或不可恢复，原方案保持不变。'
+  } else handleImportResult(result)
+}
+
+function permanentlyRemove(recordId?: string): void {
+  if (!window.confirm(recordId ? '永久删除该记录？删除后无法恢复。' : '清空回收站？所有记录将永久删除，无法恢复。')) return
+  if (!store.removeRecycledProject(recordId)) transferMessage.value = '保存失败，请立即导出备份。回收站记录仍保留。'
 }
 </script>
 
 <template>
   <Teleport to="body">
-    <div v-if="open" class="project-dialog-backdrop" @mousedown.self="emit('close')">
+    <div v-if="open" class="project-dialog-backdrop" @click.self="emit('close')">
       <section class="project-dialog" role="dialog" aria-modal="true" aria-labelledby="project-dialog-title">
         <header>
           <div>
             <span class="eyebrow">PROJECT LIBRARY</span>
-            <h2 id="project-dialog-title">{{ importingAtCapacity ? '选择要替换的方案' : replacementMode ? '选择要替换的方案' : '我的方案库' }}</h2>
-            <p v-if="importingAtCapacity">已达到 5 份上限，选择一份方案替换为“{{ pendingImport?.project.name }}”。</p>
+            <h2 id="project-dialog-title">{{ importingAtCapacity || replacementMode || pendingRestoreId ? '选择要替换的方案' : showingRecycleBin ? '回收站' : '我的方案库' }}</h2>
+            <p v-if="pendingRestoreId">方案库已满，请选择恢复时要替换的方案；取消后两边记录均保留。</p>
+            <p v-else-if="importingAtCapacity">已达到 5 份上限，选择一份方案替换为“{{ pendingImport?.project.name }}”。</p>
             <p v-else>{{ replacementMode ? '已达到 5 份上限，选择一份方案替换为空白方案。' : '方案保存在当前浏览器中，可导出后在另一台电脑继续编辑。' }}</p>
           </div>
           <div class="project-dialog-actions">
@@ -205,8 +242,15 @@ function deleteProject(project: PersistedProject): void {
         </header>
 
         <p v-if="transferMessage" class="project-transfer-message" role="status">{{ transferMessage }}</p>
+        <p class="project-backup-note">方案仅保存在当前浏览器，清理浏览器数据可能导致丢失，请导出文件备份。</p>
+        <p v-if="store.storageStatus === 'error'" class="project-transfer-message" role="alert">保存失败，请立即导出备份</p>
+        <nav class="project-library-tabs" aria-label="方案与回收站">
+          <button type="button" @click="showingRecycleBin = false; pendingRestoreId = null; pendingImport = null">正常方案 {{ store.projects.length }}/5</button>
+          <button type="button" @click="showingRecycleBin = true; pendingRestoreId = null; pendingImport = null; store.refreshRecycleBin()">回收站 {{ store.recycledProjects.length }}/5</button>
+          <button v-if="showingRecycleBin" type="button" :disabled="!store.recycledProjects.length" @click="permanentlyRemove()">清空回收站</button>
+        </nav>
 
-        <div class="project-list">
+        <div v-if="!showingRecycleBin" class="project-list">
           <article v-for="project in sortedProjects" :key="project.id"
             :class="['project-card', { active: project.id === store.activeProjectId }]">
             <ProjectThumbnail :document="project.document" />
@@ -221,7 +265,8 @@ function deleteProject(project: PersistedProject): void {
               <p>{{ metadata(project) }}</p>
               <small>修改于 {{ formatDate(project.updatedAt) }}</small>
               <div class="project-card-actions">
-                <button v-if="importingAtCapacity" class="replace-action" type="button"
+                <button v-if="pendingRestoreId" class="replace-action" type="button" @click="restoreProject(pendingRestoreId, project)">恢复并替换此方案</button>
+                <button v-else-if="importingAtCapacity" class="replace-action" type="button"
                   @click="replaceWithImport(project)">用导入方案替换</button>
                 <button v-else-if="replacementMode" class="replace-action" type="button"
                   @click="replaceWithBlank(project)">替换此方案</button>
@@ -232,6 +277,22 @@ function deleteProject(project: PersistedProject): void {
                 <button v-if="!importingAtCapacity && !replacementMode" type="button" @click="beginRename(project)">重命名</button>
                 <button v-if="!importingAtCapacity && !replacementMode" class="danger-action" type="button" :disabled="store.projects.length <= 1"
                   @click="deleteProject(project)">删除</button>
+              </div>
+            </div>
+          </article>
+        </div>
+        <div v-else class="project-list">
+          <p>仅保留最近 5 份，最长 30 天；到期或超量记录自动淘汰，请及时导出备份。</p>
+          <p v-if="!store.recycledProjects.length">回收站为空。</p>
+          <article v-for="record in store.recycledProjects" :key="record.id" class="project-card">
+            <ProjectThumbnail :document="record.project.document" />
+            <div class="project-card-content">
+              <h3>{{ record.project.name }}</h3>
+              <p>{{ metadata(record.project) }}</p>
+              <small>{{ record.reason === 'delete' ? '删除' : '替换' }}于 {{ formatDate(record.movedAt) }} · 最长 30 天</small>
+              <div class="project-card-actions">
+                <button type="button" @click="restoreProject(record.id)">恢复方案</button>
+                <button class="danger-action" type="button" @click="permanentlyRemove(record.id)">永久删除</button>
               </div>
             </div>
           </article>
