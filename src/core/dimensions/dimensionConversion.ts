@@ -1,6 +1,7 @@
 import type { Gauge } from '../gauge/gauge.types'
 import { getShapeBoundarySegments } from '../geometry/boundarySegments'
-import { getShapeBounds, resizeShapeToBounds } from '../geometry/geometry'
+import { getShapeBounds } from '../geometry/geometry'
+import { shapeForRaster } from '../raster/rasterizer'
 import type { Point, Shape } from '../geometry/shape.types'
 
 export type RoundingDirection = 'floor' | 'ceil'
@@ -56,12 +57,13 @@ export function convertDimension(
   densityPerCm: number,
   direction: RoundingDirection | null,
   anchor: Point,
+  countMultiple = 1,
 ): DimensionConversionResult {
   const rawCount = targetCm * densityPerCm
-  const nearest = Math.round(rawCount)
+  const nearest = Math.round(rawCount / countMultiple) * countMultiple
   const exact = nearest > 0 && Math.abs(rawCount - nearest) < DIMENSION_EPSILON
-  const floorCount = exact ? nearest : Math.floor(rawCount)
-  const ceilCount = exact ? nearest : Math.ceil(rawCount)
+  const floorCount = exact ? nearest : Math.floor(rawCount / countMultiple) * countMultiple
+  const ceilCount = exact ? nearest : Math.ceil(rawCount / countMultiple) * countMultiple
   const floor = option('floor', floorCount, targetCm, densityPerCm)
   const ceil = option('ceil', ceilCount, targetCm, densityPerCm)
   const selected = exact && floor.valid ? floor
@@ -91,13 +93,8 @@ export function createShapeDimensionResults(
   policy: ShapeRoundingPolicy,
 ): DimensionConversionResult[] {
   if (shape.type === 'path' && !shape.closed) return []
-  const originalBounds = getShapeBounds(shape)
   const counts = selectedShapeCounts(shape, gauge, policy)
-  const width = counts.stitches === null ? originalBounds.width : counts.stitches / gauge.stitchesPerCm
-  const height = counts.rows === null ? originalBounds.height : counts.rows / gauge.rowsPerCm
-  const adjustedShape = resizeShapeToBounds(shape, {
-    x: originalBounds.x + (originalBounds.width - width) / 2, y: originalBounds.y, width, height,
-  })
+  const adjustedShape = shapeForRaster(shape, gauge, { ...counts, direction: 'bottom-up' })
   const actualSegments = getShapeBoundarySegments(adjustedShape)
   return getShapeBoundarySegments(shape).flatMap((segment) => {
     const bounds = getShapeBounds(segment.rasterShape)
@@ -140,7 +137,7 @@ export function createOverallDimensionResults(shape: Shape, gauge: Gauge, policy
   if (shape.type === 'path' && !shape.closed) return []
   const bounds = getShapeBounds(shape)
   return [
-    bounds.width > DIMENSION_EPSILON ? convertDimension(shape.id, -1, 'stitches', bounds.width, gauge.stitchesPerCm, policy.stitches, { x: bounds.x + bounds.width / 2, y: bounds.y }) : null,
+    bounds.width > DIMENSION_EPSILON ? convertDimension(shape.id, -1, 'stitches', bounds.width, gauge.stitchesPerCm, policy.stitches, { x: bounds.x + bounds.width / 2, y: bounds.y }, shape.type === 'path' && shape.editConstraint?.type === 'vertical-mirror' ? 2 : 1) : null,
     bounds.height > DIMENSION_EPSILON ? convertDimension(shape.id, -1, 'rows', bounds.height, gauge.rowsPerCm, policy.rows, { x: bounds.x, y: bounds.y + bounds.height / 2 }) : null,
   ].filter((item): item is DimensionConversionResult => Boolean(item))
 }
@@ -155,6 +152,7 @@ export function selectedShapeCounts(
   const stitchResult = convertDimension(
     shape.id, -1, 'stitches', bounds.width, gauge.stitchesPerCm,
     policy.stitches, { x: bounds.x + bounds.width / 2, y: bounds.y },
+    shape.type === 'path' && shape.editConstraint?.type === 'vertical-mirror' ? 2 : 1,
   )
   const rowResult = convertDimension(
     shape.id, -1, 'rows', bounds.height, gauge.rowsPerCm,

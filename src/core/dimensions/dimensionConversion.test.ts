@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import { calculateGauge } from '../gauge/gauge'
 import { convertDimension, createShapeDimensionResults, formatCm, selectedShapeCounts } from './dimensionConversion'
+import type { PathShape } from '../geometry/shape.types'
 
 describe('dimension conversion', () => {
+  it('镜像整体宽选择正偶数，半值向上、最低两针，普通形状仍可奇数', () => {
+    const currentGauge = calculateGauge({ sampleStitches: 10, sampleRows: 10, sampleWidthCm: 10, sampleHeightCm: 10 })
+    const shape: PathShape = { id: 'm', type: 'path', closed: true, editConstraint: { type: 'vertical-mirror', axisX: 3.5 },
+      nodes: [{ anchor: { x: 1, y: 1 } }, { anchor: { x: 6, y: 1 } }, { anchor: { x: 3.5, y: 5 } }] }
+    expect(selectedShapeCounts(shape, currentGauge, { stitches: null, rows: null }).stitches).toBe(6)
+    expect(selectedShapeCounts(shape, currentGauge, { stitches: 'floor', rows: null }).stitches).toBe(4)
+    expect(selectedShapeCounts({ ...shape, editConstraint: undefined }, currentGauge, { stitches: null, rows: null }).stitches).toBe(5)
+    expect(convertDimension('m', -1, 'stitches', 0.2, 1, 'floor', { x: 0, y: 0 }, 2).selected?.count).toBe(2)
+  })
   it('半值向上、零候选排除且手动方向不绕过最低有效值', () => {
     expect(convertDimension('p', -1, 'rows', 2.5, 1, null, { x: 0, y: 0 }).selected?.count).toBe(3)
     const tiny = convertDimension('p', -1, 'stitches', 0.2, 1, 'floor', { x: 0, y: 0 })

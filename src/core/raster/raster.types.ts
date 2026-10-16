@@ -17,6 +17,8 @@ export interface StitchSegment {
 }
 
 export interface RasterRow {
+  /** Per-piece lattice origin; mirrored pieces keep the original axis between needles. */
+  originXCm?: number
   rowIndex: number
   yCm: number
   segments: StitchSegment[]

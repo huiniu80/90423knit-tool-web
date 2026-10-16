@@ -4,7 +4,7 @@ import type { KnitDirection } from '../core/knitting/planner.types'
 import type { RasterOptions } from '../core/raster/raster.types'
 import type { ViewMode } from './editor.types'
 import type { ShapeRoundingPolicy } from '../core/dimensions/dimensionConversion'
-import { detectPathSymmetry, enablePathMirror } from '../core/geometry/path'
+import { detectPathSymmetry } from '../core/geometry/path'
 import type { OperationOverrides } from '../core/knitting/rowOperations'
 
 /** Legacy single-document key. Kept only for one-time migration. */
@@ -222,9 +222,9 @@ export function migrateEditorDocument(value: unknown): PersistedEditorDocument |
       if (!isRecord(shape) || shape.type !== 'path' || !stitchWidthCm) return shape
       const candidate = shape as unknown as Shape
       if (candidate.type !== 'path') return shape
-      const symmetry = detectPathSymmetry(candidate, stitchWidthCm * 0.55, stitchWidthCm / 2)
+      const symmetry = detectPathSymmetry(candidate, stitchWidthCm * 0.55)
       return symmetry
-        ? enablePathMirror(candidate, 'average', stitchWidthCm / 2)
+        ? { ...candidate, editConstraint: { type: 'vertical-mirror', axisX: symmetry.axisX } }
         : candidate
     })
     migrated = { ...migrated, version: EDITOR_DOCUMENT_VERSION, shapes }

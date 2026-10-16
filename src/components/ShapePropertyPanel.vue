@@ -65,10 +65,9 @@ function requestPathMirror(): void {
   const symmetry = detectPathSymmetry(
     path,
     gauge.value.stitchWidthCm * 0.55,
-    gauge.value.stitchWidthCm / 2,
   )
   if (symmetry) {
-    store.replaceShape(enablePathMirror(path, 'average', gauge.value.stitchWidthCm / 2))
+    store.replaceShape({ ...path, editConstraint: { type: 'vertical-mirror', axisX: symmetry.axisX } })
     return
   }
   mirrorChoiceShapeId.value = path.id
@@ -79,7 +78,6 @@ function confirmPathMirror(source: PathMirrorSource): void {
   store.replaceShape(enablePathMirror(
     selectedShape.value,
     source,
-    gauge.value.stitchWidthCm / 2,
   ))
   mirrorChoiceShapeId.value = null
 }

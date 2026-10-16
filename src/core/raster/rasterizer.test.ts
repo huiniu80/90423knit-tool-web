@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { calculateGauge } from '../gauge/gauge'
 import type { FabricCanvas } from '../gauge/gauge.types'
-import type { Shape } from '../geometry/shape.types'
+import type { Shape, PathShape } from '../geometry/shape.types'
 import { mergeRasterRows, rasterize, rasterizeShapes } from './rasterizer'
 
 const gauge = calculateGauge({
@@ -13,6 +13,25 @@ const gauge = calculateGauge({
 const canvas: FabricCanvas = { widthCm: 30, heightCm: 30 }
 
 describe('Rasterizer', () => {
+  it('任意既有轴的镜像针格每行偶数、左右成对且源轮廓不动', () => {
+    const shape: PathShape = { id: 'mirror', type: 'path', closed: true,
+      editConstraint: { type: 'vertical-mirror', axisX: 10.3 }, nodes: [
+        { anchor: { x: 5.3, y: 2 } }, { anchor: { x: 15.3, y: 2 } },
+        { anchor: { x: 13.3, y: 8 } }, { anchor: { x: 7.3, y: 8 } },
+      ] }
+    const original = JSON.stringify(shape)
+    for (const stitchWidthCm of [1, 0.7, 1.3]) {
+      const currentGauge = { ...gauge, stitchWidthCm, stitchesPerCm: 1 / stitchWidthCm }
+      const rows = rasterize(shape, currentGauge, canvas, { mode: 'center', symmetryOptimization: false }, { stitches: 10, rows: 10, direction: 'bottom-up' })
+      for (const row of rows.filter(row => row.stitchCount)) {
+        expect(row.stitchCount % 2).toBe(0)
+        const left = row.segments[0]!
+        const right = row.segments.at(-1)!
+        expect((row.originXCm ?? 0) + (left.startStitch + right.endStitch + 1) * stitchWidthCm / 2).toBeCloseTo(10.3)
+      }
+      expect(JSON.stringify(shape)).toBe(original)
+    }
+  })
   it('边界恰好通过针格中心时，整数总宽高不会重复计入另一端', () => {
     const shape: Shape = { id: 'aligned', type: 'rectangle', x: 2.5, y: 0.3, widthCm: 3, heightCm: 3 }
     const active = rasterize(shape, gauge, canvas, { mode: 'center', symmetryOptimization: false },

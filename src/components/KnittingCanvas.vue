@@ -46,7 +46,6 @@ import type {
 import { useEditorStore } from '../stores/editor'
 import { avoidPinnedCardCollisions } from './annotationCardLayout'
 import { createCanvasExportLayout } from './canvasExportLayout'
-import { mergeRasterRows } from '../core/raster/rasterizer'
 import { layoutMarkersGlobally } from './markerLayout'
 import type { LineObstacle } from './markerLayout'
 import { deleteEditableNode, insertEdgeNode, nearestEditableEdge } from './nodeEditing'
@@ -137,7 +136,6 @@ const {
   fabric,
   fabricGrid,
   gauge,
-  rasterRows,
   shapes,
   shapePlans,
   selectedShape,
@@ -226,9 +224,7 @@ const stageCursor = computed(() => {
 })
 
 const rasterShapeConfig = computed<KonvaShapeConfig>(() => {
-  const rows = exportingCanvas.value
-    ? mergeRasterRows(shapePlans.value.filter((plan) => plan.canExport).map((plan) => plan.rasterRows), gauge.value, fabric.value)
-    : rasterRows.value
+  const rows = shapePlans.value.filter(plan => !exportingCanvas.value || plan.canExport).flatMap(plan => plan.rasterRows)
   const stitchWidthPx = gauge.value.stitchWidthCm * zoom.value
   const rowHeightPx = gauge.value.rowHeightCm * zoom.value
   const height = fabricHeightPx.value
@@ -244,7 +240,7 @@ const rasterShapeConfig = computed<KonvaShapeConfig>(() => {
         const y = height - (row.rowIndex + 1) * rowHeightPx
         for (const segment of row.segments) {
           context.rect(
-            segment.startStitch * stitchWidthPx,
+            (row.originXCm ?? 0) * zoom.value + segment.startStitch * stitchWidthPx,
             y,
             (segment.endStitch - segment.startStitch + 1) * stitchWidthPx,
             rowHeightPx,

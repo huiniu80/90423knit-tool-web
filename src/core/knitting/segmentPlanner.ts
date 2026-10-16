@@ -50,14 +50,15 @@ function nearestGarmentEdge(
   }
 
   rows.forEach((row) => {
+    const origin = row.originXCm ?? 0
     const left = row.segments[0]
     const right = row.segments.at(-1)
     if (!left || !right) return
-    include('left-outer', left.startStitch * stitchWidthCm, row.yCm)
-    include('right-outer', (right.endStitch + 1) * stitchWidthCm, row.yCm)
+    include('left-outer', origin + left.startStitch * stitchWidthCm, row.yCm)
+    include('right-outer', origin + (right.endStitch + 1) * stitchWidthCm, row.yCm)
     if (row.segments.length === 2) {
-      include('left-neck', (left.endStitch + 1) * stitchWidthCm, row.yCm)
-      include('right-neck', right.startStitch * stitchWidthCm, row.yCm)
+      include('left-neck', origin + (left.endStitch + 1) * stitchWidthCm, row.yCm)
+      include('right-neck', origin + right.startStitch * stitchWidthCm, row.yCm)
     }
   })
   return nearestEdge
@@ -70,19 +71,20 @@ function edgePoint(
 ): { x: number; y: number } | null {
   const left = row.segments[0]
   const right = row.segments.at(-1)
+  const origin = row.originXCm ?? 0
   if (!left || !right) return null
   switch (edge) {
     case 'left-outer':
-      return { x: left.startStitch * stitchWidthCm, y: row.yCm }
+      return { x: origin + left.startStitch * stitchWidthCm, y: row.yCm }
     case 'right-outer':
-      return { x: (right.endStitch + 1) * stitchWidthCm, y: row.yCm }
+      return { x: origin + (right.endStitch + 1) * stitchWidthCm, y: row.yCm }
     case 'left-neck':
       return row.segments.length === 2
-        ? { x: (left.endStitch + 1) * stitchWidthCm, y: row.yCm }
+        ? { x: origin + (left.endStitch + 1) * stitchWidthCm, y: row.yCm }
         : null
     case 'right-neck':
       return row.segments.length === 2
-        ? { x: right.startStitch * stitchWidthCm, y: row.yCm }
+        ? { x: origin + right.startStitch * stitchWidthCm, y: row.yCm }
         : null
   }
 }
