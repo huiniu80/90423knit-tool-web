@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { PersistedProject } from './editor.persistence'
 import { EDITOR_DOCUMENT_VERSION } from './editor.persistence'
+import { CALCULATION_RULE_VERSION, createCalculationSnapshot, isCalculationSnapshot, sourceFingerprint } from '../core/knitting/calculationSnapshot'
 import {
   PROJECT_FILE_FORMAT,
   createProjectFile,
@@ -33,6 +34,65 @@ function projectFixture(): PersistedProject {
 }
 
 describe('编织方案文件', () => {
+  it('同次源导出有效快照、规则版本和结束平收，重新导出替换旧快照', () => {
+    const project = projectFixture()
+    const file = createProjectFile(project, '2026-10-16T02:00:00.000Z')
+    const snapshot = file.project.calculationSnapshot!
+    expect(snapshot.calculatedAt).toBe(file.exportedAt)
+    expect(snapshot.ruleVersion).toBe(CALCULATION_RULE_VERSION)
+    expect(snapshot.sourceFingerprint).toBe(sourceFingerprint(file.project.document))
+    expect(isCalculationSnapshot(snapshot)).toBe(true)
+    expect(snapshot.pieces[0]!.instructions.at(-1)!.finishOperations![0]!.kind).toBe('bind-off')
+    const old = JSON.stringify(snapshot)
+    project.document.gaugeInput.sampleRows = 30
+    const newer = createProjectFile(project).project.calculationSnapshot!
+    expect(newer.pieces[0]!.instructions.length).not.toBe(snapshot.pieces[0]!.instructions.length)
+    expect(JSON.stringify(snapshot)).toBe(old)
+  })
+  it('没有快照的旧文件保持兼容，历史规则版本可只读保存', () => {
+    const file = createProjectFile(projectFixture())
+    file.project.calculationSnapshot!.ruleVersion = 'historical-older-rule'
+    expect(parseProjectFile(serializeProjectFile(file)).ok).toBe(true)
+    delete file.project.calculationSnapshot
+    expect(parseProjectFile(serializeProjectFile(file)).ok).toBe(true)
+  })
+  it('无效织片保留真实状态而不带有效逐行表，镜像针格保留原轴偏移', () => {
+    const project = projectFixture()
+    project.document.shapes.push({ id: 'open', type: 'path', closed: false, nodes: [{ anchor: { x: 1, y: 1 } }, { anchor: { x: 4, y: 8 } }] })
+    project.document.shapes[0] = { id: 'front-piece', type: 'path', closed: true, editConstraint: { type: 'vertical-mirror', axisX: 20.3 }, nodes: [{ anchor: { x: 12.8, y: 10 } }, { anchor: { x: 27.8, y: 10 } }, { anchor: { x: 24.3, y: 20 } }, { anchor: { x: 16.3, y: 20 } }] }
+    const snapshot = createCalculationSnapshot(project.document)
+    expect(snapshot.pieces[1]!.status).toContain('未闭合')
+    expect(snapshot.pieces[1]!.instructions).toEqual([])
+    expect(snapshot.pieces[0]!.rasterRows[0]!.originXCm).toBeDefined()
+    expect(snapshot.pieces[0]!.rasterRows.every(row => row.stitchCount % 2 === 0)).toBe(true)
+    expect(isCalculationSnapshot(snapshot)).toBe(true)
+  })
+  it('快照针数、操作冲突、无穷尺寸和超量操作拒绝导入，不信任历史内容', () => {
+    for (const mutate of [
+      (s: ReturnType<typeof createCalculationSnapshot>) => { s.pieces[0]!.rasterRows[0]!.stitchCount++ },
+      (s: ReturnType<typeof createCalculationSnapshot>) => { s.pieces[0]!.instructions[1]!.operations = s.pieces[0]!.instructions[0]!.operations },
+      (s: ReturnType<typeof createCalculationSnapshot>) => { s.pieces[0]!.appearance.width = Infinity },
+      (s: ReturnType<typeof createCalculationSnapshot>) => { s.pieces[0]!.instructions[0]!.operations = Array(11).fill(s.pieces[0]!.instructions[0]!.operations![0]) },
+    ]) {
+      const file = createProjectFile(projectFixture())
+      mutate(file.project.calculationSnapshot!)
+      expect(parseProjectFile(serializeProjectFile(file)).ok).toBe(false)
+    }
+  })
+  it('最高行数的宽针格文件可安全往返，计算引用不因排版改变', () => {
+    const project = projectFixture()
+    project.document.fabric = { widthCm: 60, heightCm: 300 }
+    project.document.gaugeInput = { sampleStitches: 200, sampleRows: 100, sampleWidthCm: 20, sampleHeightCm: 10 }
+    project.document.shapes = [{ id: 'front-piece', type: 'rectangle', x: 0, y: 0, widthCm: 60, heightCm: 300 }]
+    const file = createProjectFile(project)
+    expect(file.project.calculationSnapshot!.pieces[0]!.instructions).toHaveLength(3000)
+    const serialized = serializeProjectFile(file)
+    expect(serialized.length).toBeLessThan(10_000_000)
+    expect(parseProjectFile(serialized).ok).toBe(true)
+    const fingerprint = sourceFingerprint(project.document)
+    project.document.cardPositions = { 'front-piece:0': { x: 4, y: 5 } }
+    expect(sourceFingerprint(project.document)).toBe(fingerprint)
+  })
   it('旧文件升级有说明，新文件往返不假报升级', () => {
     const current = createProjectFile(projectFixture())
     expect(parseProjectFile(serializeProjectFile(current))).toEqual({ ok: true, file: current })

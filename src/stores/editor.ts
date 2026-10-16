@@ -864,6 +864,7 @@ export const useEditorStore = defineStore('editor', () => {
     return {
       id: createId(),
       name: uniqueImportedProjectName(file.project.name, excludedProjectId),
+      ...(file.project.calculationSnapshot ? { calculationSnapshot: clonePlain(file.project.calculationSnapshot) } : {}),
       createdAt: now,
       updatedAt: now,
       document,
@@ -895,8 +896,14 @@ export const useEditorStore = defineStore('editor', () => {
 
   function createProjectExport(projectId = activeProjectId.value): ExportedProjectFileV1 | null {
     if (projectId === activeProjectId.value) autoSave.flush()
-    const project = projects.value.find((item) => item.id === projectId)
-    return project ? createProjectFile(projectId === activeProjectId.value
+    const project = readProjectSource(projectId)
+    return project ? createProjectFile(project) : null
+  }
+
+  // Read the last committed source even before autosave, without altering the old snapshot.
+  function readProjectSource(projectId = activeProjectId.value): PersistedProject | null {
+    const project = projects.value.find(item => item.id === projectId)
+    return project ? clonePlain(projectId === activeProjectId.value
       ? { ...project, document: createPersistedDocument() } : project) : null
   }
 
@@ -1157,6 +1164,7 @@ export const useEditorStore = defineStore('editor', () => {
     renameProject,
     deleteProject,
     createProjectExport,
+    readProjectSource,
     importProject,
     replaceWithImportedProject,
     recycledProjects,

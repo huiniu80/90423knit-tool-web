@@ -7,6 +7,7 @@ import type { PersistedProject } from '../stores/editor.persistence'
 import type { ExportedProjectFileV1 } from '../stores/projectTransfer'
 import { parseProjectFile, serializeProjectFile } from '../stores/projectTransfer'
 import ProjectThumbnail from './ProjectThumbnail.vue'
+import HistoryComparisonDialog from './HistoryComparisonDialog.vue'
 
 const props = defineProps<{ open: boolean; replacementMode: boolean }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
@@ -18,6 +19,7 @@ const pendingImport = ref<ExportedProjectFileV1 | null>(null)
 const transferMessage = ref('')
 const showingRecycleBin = ref(false)
 const pendingRestoreId = ref<string | null>(null)
+const historyProject = ref<PersistedProject | null>(null)
 
 const importingAtCapacity = computed(() => pendingImport.value !== null)
 
@@ -50,6 +52,7 @@ watch(() => props.open, (open) => {
     transferMessage.value = ''
     pendingRestoreId.value = null
     showingRecycleBin.value = false
+    historyProject.value = null
   } else {
     store.refreshRecycleBin()
   }
@@ -84,12 +87,9 @@ function safeFileName(name: string): string {
 function exportProject(project: PersistedProject): void {
   if (project.id === store.activeProjectId && store.hasUnfinishedDraft
     && !window.confirm('未完成的路径草稿不会包含在方案文件中。仍要导出吗？')) return
-  const file = store.createProjectExport(project.id)
-  if (!file) {
-    transferMessage.value = '导出失败：找不到该方案。'
-    return
-  }
   try {
+    const file = store.createProjectExport(project.id)
+    if (!file) throw Error('找不到方案')
     const blob = new Blob([serializeProjectFile(file)], { type: 'application/json;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -131,6 +131,10 @@ async function importSelectedFile(event: Event): Promise<void> {
   const selectedFile = input.files?.[0]
   input.value = ''
   if (!selectedFile) return
+  if (selectedFile.size > 100_000_000) {
+    transferMessage.value = '导入失败：文件过大，请使用较小的单份方案文件。'
+    return
+  }
 
   let serialized: string
   try {
@@ -274,6 +278,8 @@ function permanentlyRemove(recordId?: string): void {
                   @click="openProject(project.id)">{{ project.id === store.activeProjectId ? '已打开' : '打开' }}</button>
                 <button v-if="!importingAtCapacity && !replacementMode" type="button"
                   @click="exportProject(project)">导出方案</button>
+                <button v-if="!importingAtCapacity && !replacementMode" type="button"
+                  @click="historyProject = store.readProjectSource(project.id)">历史结果对照</button>
                 <button v-if="!importingAtCapacity && !replacementMode" type="button" @click="beginRename(project)">重命名</button>
                 <button v-if="!importingAtCapacity && !replacementMode" class="danger-action" type="button" :disabled="store.projects.length <= 1"
                   @click="deleteProject(project)">删除</button>
@@ -300,4 +306,5 @@ function permanentlyRemove(recordId?: string): void {
       </section>
     </div>
   </Teleport>
+  <HistoryComparisonDialog :project="historyProject" @close="historyProject = null" />
 </template>

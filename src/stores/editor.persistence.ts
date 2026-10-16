@@ -6,6 +6,8 @@ import type { ViewMode } from './editor.types'
 import type { ShapeRoundingPolicy } from '../core/dimensions/dimensionConversion'
 import { detectPathSymmetry } from '../core/geometry/path'
 import type { OperationOverrides } from '../core/knitting/rowOperations'
+import { isCalculationSnapshot } from '../core/knitting/calculationSnapshot'
+import type { CalculationSnapshot } from '../core/knitting/calculationSnapshot'
 
 /** Legacy single-document key. Kept only for one-time migration. */
 export const EDITOR_STORAGE_KEY = 'knitting-pattern-planner:editor:v1'
@@ -38,6 +40,7 @@ export interface PersistedEditorDocument {
 }
 
 export interface PersistedProject {
+  calculationSnapshot?: CalculationSnapshot
   id: string
   name: string
   createdAt: string
@@ -240,6 +243,7 @@ export function migrateEditorDocument(value: unknown): PersistedEditorDocument |
 
 function isPersistedProject(value: unknown): value is PersistedProject {
   return isRecord(value)
+    && (value.calculationSnapshot === undefined || isCalculationSnapshot(value.calculationSnapshot))
     && typeof value.id === 'string' && value.id.length > 0
     && typeof value.name === 'string' && value.name.trim().length > 0
     && isValidTimestamp(value.createdAt)

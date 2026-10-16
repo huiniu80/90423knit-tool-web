@@ -1,5 +1,7 @@
 import type { PersistedEditorDocument, PersistedProject } from './editor.persistence'
 import { migrateEditorDocument } from './editor.persistence'
+import { createCalculationSnapshot, isCalculationSnapshot } from '../core/knitting/calculationSnapshot'
+import type { CalculationSnapshot } from '../core/knitting/calculationSnapshot'
 
 export const PROJECT_FILE_FORMAT = 'knitting-pattern-planner/project'
 export const PROJECT_FILE_VERSION = 2
@@ -11,6 +13,7 @@ export interface ExportedProjectFileV1 {
   project: {
     name: string
     document: PersistedEditorDocument
+    calculationSnapshot?: CalculationSnapshot
   }
 }
 
@@ -42,6 +45,8 @@ export function createProjectFile(
   document.rasterOptions.mode = 'center'
   document.shapeDirections = Object.fromEntries(Object.keys(document.shapeDirections).map((id) => [id, 'bottom-up']))
   delete document.rasterRuleNoticePending
+  const snapshot = createCalculationSnapshot(document, exportedAt)
+  if (!isCalculationSnapshot(snapshot)) throw Error('计算快照无效或规模过大，无法导出。')
   return {
     format: PROJECT_FILE_FORMAT,
     version: PROJECT_FILE_VERSION,
@@ -49,6 +54,7 @@ export function createProjectFile(
     project: {
       name: project.name,
       document,
+      calculationSnapshot: snapshot,
     },
   }
 }
@@ -58,6 +64,7 @@ export function serializeProjectFile(file: ExportedProjectFileV1): string {
 }
 
 export function parseProjectFile(serialized: string): ProjectFileParseResult {
+  if (serialized.length > 100_000_000) return { ok: false, reason: 'invalid-file' }
   let value: unknown
   try {
     value = JSON.parse(serialized)
@@ -81,13 +88,14 @@ export function parseProjectFile(serialized: string): ProjectFileParseResult {
   }
   const document = migrateEditorDocument(value.project.document)
   if (!document || !hasConsistentDocumentReferences(document)) return { ok: false, reason: 'invalid-file' }
+  if (value.project.calculationSnapshot !== undefined && !isCalculationSnapshot(value.project.calculationSnapshot)) return { ok: false, reason: 'invalid-file' }
   return {
     ok: true,
     ...((value.version !== PROJECT_FILE_VERSION || (isRecord(value.project.document) && value.project.document.version !== document.version)) ? { upgraded: true } : {}),
     file: {
       ...(value as unknown as ExportedProjectFileV1),
       version: PROJECT_FILE_VERSION,
-      project: { name: value.project.name, document },
+      project: { name: value.project.name, document, ...(value.project.calculationSnapshot ? { calculationSnapshot: value.project.calculationSnapshot as CalculationSnapshot } : {}) },
     },
   }
 }

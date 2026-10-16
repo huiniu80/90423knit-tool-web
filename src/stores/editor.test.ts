@@ -29,6 +29,26 @@ function stubBrowser(storage: MemoryStorage): void {
 }
 
 describe('Editor Store', () => {
+  it('历史快照不随编辑改写，对照读取最新提交且不包含拖动中间状态', () => {
+    vi.useFakeTimers()
+    stubBrowser(new MemoryStorage())
+    const store = useEditorStore()
+    store.addDefaultShape('rectangle')
+    const file = store.createProjectExport()!
+    expect(store.importProject(file).status).toBe('imported')
+    const old = JSON.stringify(store.activeProject!.calculationSnapshot)
+    const shape = store.shapes[0]!
+    store.replaceShape({ ...shape, name: '已提交名称' })
+    expect(store.readProjectSource()!.document.shapes[0]!.name).toBe('已提交名称')
+    expect(JSON.stringify(store.readProjectSource()!.calculationSnapshot)).toBe(old)
+    store.beginShapeMutation()
+    store.updateShapeLive({ ...store.shapes[0]!, name: '拖动中间数据' })
+    expect(store.readProjectSource()!.document.shapes[0]!.name).toBe('已提交名称')
+    store.cancelShapeMutation()
+    expect(JSON.stringify(store.createProjectExport()!.project.calculationSnapshot)).not.toBe(old)
+    expect(JSON.stringify(store.activeProject!.calculationSnapshot)).toBe(old)
+    store.$dispose()
+  })
   it('逐行侧别工艺覆盖可撤销保存恢复，针格不变，上游重算保留方向', () => {
     vi.useFakeTimers()
     const storage = new MemoryStorage()

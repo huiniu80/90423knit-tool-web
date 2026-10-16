@@ -8,6 +8,7 @@ import ProjectLibraryDialog from '../components/ProjectLibraryDialog.vue'
 import RowPlanDialog from '../components/RowPlanDialog.vue'
 import ShapePropertyPanel from '../components/ShapePropertyPanel.vue'
 import { useEditorStore } from '../stores/editor'
+import { createCalculationSnapshot } from '../core/knitting/calculationSnapshot'
 import { loadSidebarExpanded, saveSidebarExpanded } from './editorLayoutPreferences'
 
 const store = useEditorStore()
@@ -24,6 +25,31 @@ function updatePortraitLayout(): void {
 const projectLibraryOpen = ref(false)
 const replacementMode = ref(false)
 const rowPlanOpen = ref(false)
+const exportingPdf = ref(false)
+async function downloadPdf(): Promise<void> {
+  if (exportingPdf.value) return
+  const project = store.readProjectSource()
+  if (!project) return
+  const snapshot = createCalculationSnapshot(project.document)
+  if (!snapshot.pieces.some(piece => !piece.status)) {
+    store.showNotice('没有可导出的有效织片，请先闭合或修正轮廓。')
+    return
+  }
+  exportingPdf.value = true
+  try {
+    const { exportPlanPdf } = await import('../components/exportPlanPdf')
+    const bytes = await exportPlanPdf(project.name, snapshot)
+    const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: 'application/pdf' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${project.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-') || '编织图解'}-${snapshot.calculatedAt.slice(0, 10)}.pdf`
+    document.body.appendChild(link); link.click(); link.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    store.showNotice('已发起 PDF 下载。缝合补偿尚未加入，请核对文件中的限制和警告。')
+  } catch {
+    store.showNotice('PDF 导出失败，请重试；当前源数据仍保留。')
+  } finally { exportingPdf.value = false }
+}
 let canvasFitTimer: ReturnType<typeof setTimeout> | null = null
 
 function scheduleCanvasFit(): void {
@@ -115,7 +141,10 @@ onBeforeUnmount(() => {
       <section class="workspace">
         <CanvasToolbar :sidebar-expanded="sidebarExpanded" @toggle-sidebar="toggleSidebar"
           @fit="canvasRef?.fitCanvas()" @export="canvasRef?.exportCanvas()" />
-        <button class="row-plan-open" type="button" @click="rowPlanOpen = true">查看逐行操作表</button>
+        <div class="plan-output-actions">
+          <button class="row-plan-open" type="button" @click="rowPlanOpen = true">查看逐行操作表</button>
+          <button class="row-plan-open" type="button" :disabled="exportingPdf" :aria-busy="exportingPdf" @click="downloadPdf">{{ exportingPdf ? '正在生成 PDF…' : '导出 PDF' }}</button>
+        </div>
         <div v-if="shapePlans.some((plan) => plan.calculationMessage)" class="calculation-message" role="status">
           <p v-for="plan in shapePlans.filter((item) => item.calculationMessage)" :key="plan.shapeId">{{ plan.shapeName || '未命名轮廓' }}：{{ plan.calculationMessage }}</p>
         </div>
