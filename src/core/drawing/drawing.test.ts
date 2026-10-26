@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { calculateGauge } from '../gauge/gauge'
 import { rasterize } from '../raster/rasterizer'
-import { stitchMap } from './stitches'
+import { stitchMap, stitchReading } from './stitches'
 import { cells, createPreset, effectiveMarks, filledRegion, isDrawingDocument, occupied, replaceMarks, traceContours } from './drawing'
 import { emptyDrawing } from './types'
 import type { StitchMark } from './types'
@@ -12,10 +12,12 @@ const defs = stitchMap()
 const gauge = calculateGauge({ sampleStitches: 10, sampleRows: 10, sampleWidthCm: 10, sampleHeightCm: 10 })
 const piece = (width: number, height: number): ShapePlan => ({ shapeId: 'piece', shapeName: '衣片', shapeType: 'rectangle', direction: 'bottom-up', rasterRows: rasterize({ id: 'piece', type: 'rectangle', x: 0, y: 0, widthCm: width, heightCm: height }, gauge, { widthCm: 10, heightCm: 10 }, { mode: 'center', symmetryOptimization: false }), instructions: [], totalStitches: 0, hasSeparatedRegions: false, isFabric: true, dimensions: [], roundingPending: false, calculationMessage: '', canExport: true })
 describe('手织绘图源数据与边缘', () => {
-  it('按用户选择默认显示实际动作，组合反面行显示相应针法', () => {
-    expect(emptyDrawing().convention).toBe('operation')
-    const sample = createPreset('cable-4-l', 'operation')
-    expect(sample.marks.filter(m => m.y === 1 && m.x > 0 && m.x < 5).every(m => m.stitchId === 'purl')).toBe(true)
+  it('默认按正面外观显示，组合平针区的反面行仍显示下针图符', () => {
+    expect(emptyDrawing().convention).toBe('appearance')
+    const sample = createPreset('cable-4-l', emptyDrawing().convention)
+    expect(sample.marks.filter(m => m.y === 1 && m.x > 0 && m.x < 5).every(m => m.stitchId === 'knit')).toBe(true)
+    expect(stitchReading(defs.get('knit')!, 'appearance')).toBe('正面织下针；反面织上针')
+    expect(stitchReading(defs.get('purl')!, 'appearance')).toBe('正面织上针；反面织下针')
   })
   it('透明下针仍有占位，围合内部补针而凹口不补', () => {
     const ring = [mark(0, 0), mark(1, 0), mark(2, 0), mark(0, 1), mark(2, 1), mark(0, 2), mark(1, 2), mark(2, 2)]
@@ -71,6 +73,15 @@ describe('手织绘图源数据与边缘', () => {
   })
 })
 describe('针法计算', () => {
+  it('正面外观图符保持不变，逐行完整列出上下针的实际动作', () => {
+    const doc = emptyDrawing(); doc.marks = [mark(0, 0, 'purl'), mark(0, 1, 'purl')]
+    const before = JSON.stringify(doc)
+    const result = calculateDrawing(doc, [piece(2, 2)], gauge, { columnCount: 10, rowCount: 10 })
+    expect(result.pieces[0].rows[0].actions).toEqual(['上针 × 1', '下针 × 1'])
+    expect(result.pieces[0].rows[1].actions).toEqual(['下针 × 1（反面行反读）', '上针 × 1（反面行反读）'])
+    expect(JSON.stringify(doc)).toBe(before)
+    expect(result.pieces[0].rows.map(r => [r.input, r.output])).toEqual([[2, 2], [2, 2]])
+  })
   it('编织行从衣片底边开始编号，正面外观读法不冒推复杂反面动作', () => {
     const doc = emptyDrawing(); doc.convention = 'appearance'; doc.marks = [mark(0, 1, 'knit')]
     const result = calculateDrawing(doc, [piece(1, 2)], gauge, { columnCount: 10, rowCount: 10 })

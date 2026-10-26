@@ -2,7 +2,7 @@ import type { DrawingCalculation } from '../core/drawing/calculation'
 import type { DrawingDocument, StitchDefinition, StitchMark } from '../core/drawing/types'
 import type { Shape } from '../core/geometry/shape.types'
 import type { Gauge } from '../core/gauge/gauge.types'
-import { drawStitch, stitchMap } from '../core/drawing/stitches'
+import { drawStitch, stitchMap, stitchReading } from '../core/drawing/stitches'
 import { flattenPath } from '../core/geometry/path'
 
 export interface DrawingExport { name: string; drawing: DrawingDocument; calculation: DrawingCalculation; shapes: Shape[]; gauge: Gauge }
@@ -40,17 +40,20 @@ function drawChart(ctx: CanvasRenderingContext2D, data: DrawingExport, region: {
   for (let i = 0; i < region.width; i++) ctx.fillText(String(region.x + i + 1), x + i * size + 2, y + region.height * size + 6)
   for (let i = 0; i < region.height; i++) ctx.fillText(String(region.y + region.height - i), x - 42, y + i * size + 4)
 }
+function textHeight(ctx: CanvasRenderingContext2D, text: string, width: number, size: number): number {
+  font(ctx, size); let line = '', count = 1
+  for (const char of text) { if (ctx.measureText(line + char).width > width && line) { count++; line = '' } line += char }
+  return count * (size + 5)
+}
 function legendItemHeight(ctx: CanvasRenderingContext2D, d: StitchDefinition, width: number): number {
-  font(ctx, 18); let line = '', count = 1
-  for (const char of d.name) { if (ctx.measureText(line + char).width > width - 68 && line) { count++; line = '' } line += char }
-  return Math.max(88, count * 23 + 30)
+  return Math.max(48, textHeight(ctx, d.name, width - 68, 18)) + 24 + Math.max(textHeight(ctx, stitchReading(d, 'appearance'), width - 68, 14), textHeight(ctx, stitchReading(d, 'operation'), width - 68, 14)) + 14
 }
 function legendChunks(ctx: CanvasRenderingContext2D, defs: StitchDefinition[], width: number, height: number): StitchDefinition[][] {
   const chunks: StitchDefinition[][] = []; let current: StitchDefinition[] = [], usedHeight = 0
   for (const d of defs) { const item = legendItemHeight(ctx, d, width); if (current.length && usedHeight + item > height) { chunks.push(current); current = []; usedHeight = 0 } current.push(d); usedHeight += item }
   if (current.length) chunks.push(current); return chunks
 }
-function legend(ctx: CanvasRenderingContext2D, defs: StitchDefinition[], x: number, y: number, width: number) {
+function legend(ctx: CanvasRenderingContext2D, defs: StitchDefinition[], x: number, y: number, width: number, convention: DrawingDocument['convention']) {
   font(ctx, 22, true); ctx.fillText('针法符号 · 中文图例', x, y)
   let top = y + 40
   defs.forEach(d => {
@@ -58,6 +61,7 @@ function legend(ctx: CanvasRenderingContext2D, defs: StitchDefinition[], x: numb
     ctx.strokeStyle = '#b9b1a5'; ctx.strokeRect(x, top, 48, 48)
     const nameHeight = wrap(ctx, d.name, x + 62, top, width - 68, 18)
     font(ctx, 14); ctx.fillText(`消耗${d.input}→生成${d.output}针 · 占${d.span}格`, x + 62, top + Math.max(48, nameHeight))
+    wrap(ctx, stitchReading(d, convention), x + 62, top + Math.max(48, nameHeight) + 24, width - 68, 14)
     top += legendItemHeight(ctx, d, width)
   })
 }
@@ -77,7 +81,7 @@ export async function drawingPng(data: DrawingExport): Promise<Blob> {
   const ctx = c.getContext('2d')!; ctx.fillStyle = '#fffdf8'; ctx.fillRect(0, 0, c.width, c.height)
   heading(ctx, data, `绘图图解（针行标号为画布坐标） · ${region.width} 针格 × ${region.height} 行 · 格尺寸 ${(region.width * data.gauge.stitchWidthCm).toFixed(1)} × ${(region.height * data.gauge.rowHeightCm).toFixed(1)} cm`)
   drawChart(ctx, data, region, 58, 210, cell)
-  for (let col = 0; col < columns.length; col++) legend(ctx, columns[col], 100 + region.width * cell + col * 360, 180, 340)
+  for (let col = 0; col < columns.length; col++) legend(ctx, columns[col], 100 + region.width * cell + col * 360, 180, 340, data.drawing.convention)
   return new Promise((resolve, reject) => c.toBlob(b => b ? resolve(b) : reject(Error('图片生成失败')), 'image/png'))
 }
 export async function drawingPdf(data: DrawingExport): Promise<Uint8Array> {
@@ -99,11 +103,11 @@ export async function drawingPdf(data: DrawingExport): Promise<Uint8Array> {
     const tile = { x: region.x + x, y: region.y + y, width: Math.min(chartColumns, region.width - x), height: Math.min(chartRows, region.height - y) }
     const localDefs = [...new Set(data.calculation.marks.filter(m => m.y >= tile.y && m.y < tile.y + tile.height && m.x + defs.get(m.stitchId)!.span > tile.x && m.x < tile.x + tile.width).map(m => m.stitchId))].map(id => defs.get(id)!)
     const current = ++number
-    await page(ctx => { heading(ctx, data, `绘图 ${current}/${pages} · 画布第 ${tile.x + 1}–${tile.x + tile.width} 针格 · 第 ${tile.y + 1}–${tile.y + tile.height} 行`); drawChart(ctx, data, tile, 58, 220, 30); const local = legendChunks(ctx, localDefs, 298, 1300)[0] ?? []; legend(ctx, local, 890, 240, 298); if (local.length < localDefs.length) wrap(ctx, '其余针法见后附完整中文图例。', 890, 1580, 298, 16); wrap(ctx, '跨页的跨针图符须连同相邻页面查看。', 58, 1620, 780, 16); font(ctx, 16); ctx.fillText('完整针法图例与针数核对见后续页面。', 58, 1660) })
+    await page(ctx => { heading(ctx, data, `绘图 ${current}/${pages} · 画布第 ${tile.x + 1}–${tile.x + tile.width} 针格 · 第 ${tile.y + 1}–${tile.y + tile.height} 行`); drawChart(ctx, data, tile, 58, 220, 30); const local = legendChunks(ctx, localDefs, 298, 1300)[0] ?? []; legend(ctx, local, 890, 240, 298, data.drawing.convention); if (local.length < localDefs.length) wrap(ctx, '其余针法见后附完整中文图例。', 890, 1580, 298, 16); wrap(ctx, '跨页的跨针图符须连同相邻页面查看。', 58, 1620, 780, 16); font(ctx, 16); ctx.fillText('完整针法图例与针数核对见后续页面。', 58, 1660) })
   }
   const measureCanvas = document.createElement('canvas'), measureContext = measureCanvas.getContext('2d')!
   const chunks = legendChunks(measureContext, used, 530, 1460)
-  for (let i = 0; i < chunks.length; i += 2) await page(ctx => { heading(ctx, data, '完整中文针法图例'); legend(ctx, chunks[i], 60, 200, 530); if (chunks[i + 1]) legend(ctx, chunks[i + 1], 660, 200, 530) })
+  for (let i = 0; i < chunks.length; i += 2) await page(ctx => { heading(ctx, data, '完整中文针法图例'); legend(ctx, chunks[i], 60, 200, 530, data.drawing.convention); if (chunks[i + 1]) legend(ctx, chunks[i + 1], 660, 200, 530, data.drawing.convention) })
   for (const piece of data.calculation.pieces) for (let i = 0; i < piece.rows.length; i += 20) await page(ctx => {
     heading(ctx, data, `${piece.name} · 针数核对`); font(ctx, 19, true); ctx.fillText('行 / 图解格 / 消耗→产出 / 内部增减 / 边缘增减（首行为起针）', 58, 200)
     piece.rows.slice(i, i + 20).forEach((r, n) => { const y = 250 + n * 68; font(ctx, 18); ctx.fillText(`${r.row}（画布${r.canvasRow}） / ${r.cells} / ${r.input}→${r.output} / ${r.internalDelta} / ${r.edgeDelta}`, 58, y); wrap(ctx, r.actions.join('；') || '下针', 58, y + 24, 1100, 15, 1) })

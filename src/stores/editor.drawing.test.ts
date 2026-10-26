@@ -40,4 +40,14 @@ describe('绘图与方案联动', () => {
     store.setGaugeInputValue('sampleStitches', 20); expect(JSON.stringify(store.drawing.marks)).toBe(before)
     store.deleteSelected(); const parsed = parseProjectFile(serializeProjectFile(store.createProjectExport()!)); expect(parsed.ok).toBe(true); store.$dispose()
   })
+  it('新与空白旧方案采用正面外观，有设计的旧操作图解保持原读法', () => {
+    const store = useEditorStore()
+    expect(store.drawing.convention).toBe('appearance')
+    const document = store.readProjectSource()!.document
+    const oldDrawing = { ...store.drawing, convention: 'operation' as const }
+    expect(migrateEditorDocument({ ...document, drawing: oldDrawing })!.drawing!.convention).toBe('appearance')
+    const withMarks = { ...oldDrawing, marks: [mark(0, 0)] }
+    expect(migrateEditorDocument({ ...document, drawing: withMarks })!.drawing).toEqual(withMarks)
+    store.$dispose()
+  })
 })

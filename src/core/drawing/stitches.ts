@@ -48,6 +48,12 @@ for (const [n, left, color] of [[2, true, '#C7AD9E'], [2, false, '#DCC4B3'], [4,
     [`前${half}针移到麻花针，置于织物${left ? '前' : '后'}方。`, `织左针接下来的${half}针下针。`, `再织麻花针上的${half}针下针；交叉${n}针，针数不变。`]))
 }
 export const stitchMap = (custom: StitchDefinition[] = []) => new Map([...BUILTIN_STITCHES, ...custom].map(s => [s.id, s]))
+export const REVERSE_STITCHES: Readonly<Record<string, string>> = { knit: 'purl', purl: 'knit', 'twist-knit': 'twist-purl', 'twist-purl': 'twist-knit' }
+export function stitchReading(def: StitchDefinition, convention: 'appearance' | 'operation' | null): string {
+  if (convention !== 'appearance') return `各行按${def.name}操作`
+  const reverse = stitchMap().get(REVERSE_STITCHES[def.id])
+  return reverse ? `正面织${def.name}；反面织${reverse.name}` : '正面按针法说明；反面动作需单独核对'
+}
 export function centerSymbol(paths: number[][]): number[][] {
   const xs = paths.flatMap(p => p.filter((_, i) => i % 2 === 0)), ys = paths.flatMap(p => p.filter((_, i) => i % 2 === 1))
   if (!xs.length) return []

@@ -7,6 +7,7 @@ import StitchSymbol from './StitchSymbol.vue'
 import StitchTutorial from './StitchTutorial.vue'
 import CustomStitchDialog from './CustomStitchDialog.vue'
 import PatternSampleDialog from './PatternSampleDialog.vue'
+import { stitchReading } from '../core/drawing/stitches'
 const store = useEditorStore()
 const hovered = ref<string | null>(null), search = ref('')
 const selected = computed(() => store.drawingDefinitions.get(hovered.value ?? store.activeStitchId)!)
@@ -30,6 +31,7 @@ function preset(id: string) { if (!store.drawing.convention) { store.showNotice(
     <button @click="customSource = undefined; customOpen = true">＋ 自定义针法</button>
     <button v-if="selected.custom" @click="customSource = selected; customOpen = true">另存新版针法</button>
     <StitchTutorial :definition="selected" />
+    <p>{{ stitchReading(selected, store.drawing.convention) }}</p>
     <h2>花样小样</h2>
     <p>先画一小块，再复制到图解；可独立移动和修改。</p>
     <button @click="edit()">＋ 绘制小样</button>

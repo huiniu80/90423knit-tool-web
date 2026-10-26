@@ -242,7 +242,7 @@ export function migrateEditorDocument(value: unknown): PersistedEditorDocument |
   if (!isPersistedEditorDocument(migrated)) return null
   return {
       ...migrated,
-      ...(migrated.drawing && !migrated.drawing.convention ? { drawing: { ...migrated.drawing, convention: 'operation' as const } } : {}),
+      ...(migrated.drawing && (!migrated.drawing.convention || (!migrated.drawing.marks.length && !migrated.drawing.automaticMarks?.length && !migrated.drawing.samples.length && !migrated.drawing.placements.length && !migrated.drawing.definitions.length)) ? { drawing: { ...migrated.drawing, convention: 'appearance' as const } } : {}),
       shapeDirections: Object.fromEntries(Object.keys(migrated.shapeDirections).map((id) => [id, 'bottom-up'])),
       rasterOptions: { ...migrated.rasterOptions, mode: 'center' },
       ...(migrated.rasterOptions.mode !== 'center' ? { rasterRuleNoticePending: true } : {}),

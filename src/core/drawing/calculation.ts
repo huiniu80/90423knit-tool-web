@@ -2,7 +2,7 @@ import type { DrawingDocument, StitchMark } from './types'
 import type { ShapePlan } from '../../stores/editor.types'
 import type { Gauge, FabricGrid } from '../gauge/gauge.types'
 import { cells, effectiveMarks, key } from './drawing'
-import { stitchMap } from './stitches'
+import { REVERSE_STITCHES, stitchMap } from './stitches'
 export interface DrawingRow { row: number; canvasRow: number; cells: number; input: number; output: number; internalDelta: number; edgeDelta: number; actions: string[]; error: string }
 export interface DrawingPiece { id: string; name: string; rows: DrawingRow[]; marks: StitchMark[]; issues: string[] }
 export interface DrawingCalculation { pieces: DrawingPiece[]; issues: string[]; marks: StitchMark[] }
@@ -47,18 +47,15 @@ export function calculateDrawing(doc: DrawingDocument, plans: ShapePlan[], gauge
       let error = ''
       if (previousOutput !== null && edgeDelta !== 0 && (nominalDelta === 0 || Math.sign(edgeDelta) !== Math.sign(nominalDelta) || Math.abs(edgeDelta) > Math.abs(nominalDelta))) error = `需要在边缘${edgeDelta > 0 ? '加' : '减'} ${Math.abs(edgeDelta)} 针才能衔接，当前轮廓未提供相应变化。请调整下一行针法或轮廓。`
       const changes = new Map<string, number>()
-      for (const m of ops.filter(m => m.stitchId !== 'knit')) changes.set(m.stitchId, (changes.get(m.stitchId) ?? 0) + 1)
+      for (const m of ops) changes.set(m.stitchId, (changes.get(m.stitchId) ?? 0) + 1)
       const knittingRow = rows.length + 1
-      const opposite: Record<string, string> = { knit: 'purl', purl: 'knit', 'twist-knit': 'twist-purl', 'twist-purl': 'twist-knit' }
+      const opposite = REVERSE_STITCHES
       if (doc.convention === 'appearance' && knittingRow % 2 === 0) {
         const undefinedReverse = ops.find(m => !opposite[m.stitchId])
         if (undefinedReverse) error = `${defs.get(undefinedReverse.stitchId)!.name}尚未定义反面动作，请选择实际操作读法并核对本行针法。`
       }
-      const actions = [...changes].map(([id, count]) => `${defs.get(doc.convention === 'appearance' && knittingRow % 2 === 0 ? opposite[id] ?? id : id)!.name} × ${count}`)
-      if (doc.convention === 'appearance' && knittingRow % 2 === 0) {
-        const knits = ops.filter(m => m.stitchId === 'knit').length
-        if (knits) actions.push(`上针 × ${knits}（反面行反读）`)
-      }
+      const reverseRow = doc.convention === 'appearance' && knittingRow % 2 === 0
+      const actions = [...changes].map(([id, count]) => `${defs.get(reverseRow ? opposite[id] ?? id : id)!.name} × ${count}${reverseRow && opposite[id] ? '（反面行反读）' : ''}`)
       rows.push({ row: knittingRow, canvasRow: row.rowIndex + 1, cells: row.stitchCount, input, output, internalDelta: output - input, edgeDelta, actions, error })
       if (error) pieceIssues.push(`第 ${knittingRow} 编织行（画布第 ${row.rowIndex + 1} 行）：${error}`)
       previousOutput = output; previousCells = row.stitchCount

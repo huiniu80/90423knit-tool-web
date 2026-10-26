@@ -24,5 +24,5 @@ export interface DrawingDocument {
   generatedShapeIds: string[]
   convention: 'appearance' | 'operation' | null
 }
-export const emptyDrawing = (): DrawingDocument => ({ version: 1, marks: [], definitions: [], samples: [], placements: [], generatedShapeIds: [], convention: 'operation' })
+export const emptyDrawing = (): DrawingDocument => ({ version: 1, marks: [], definitions: [], samples: [], placements: [], generatedShapeIds: [], convention: 'appearance' })
 export type DrawingTool = 'paint' | 'erase' | 'sample' | 'place'
