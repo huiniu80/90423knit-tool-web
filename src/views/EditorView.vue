@@ -7,12 +7,15 @@ import KnittingCanvas from '../components/KnittingCanvas.vue'
 import ProjectLibraryDialog from '../components/ProjectLibraryDialog.vue'
 import RowPlanDialog from '../components/RowPlanDialog.vue'
 import ShapePropertyPanel from '../components/ShapePropertyPanel.vue'
+import StitchLibrary from '../components/StitchLibrary.vue'
+import DrawingControls from '../components/DrawingControls.vue'
+import { calculateDrawing } from '../core/drawing/calculation'
 import { useEditorStore } from '../stores/editor'
 import { createCalculationSnapshot } from '../core/knitting/calculationSnapshot'
 import { loadSidebarExpanded, saveSidebarExpanded } from './editorLayoutPreferences'
 
 const store = useEditorStore()
-const { activeProject, gridAssessment, hasUnfinishedDraft, projects, storageStatus, notice, shapePlans, projectOpenRevision } = storeToRefs(store)
+const { activeProject, gridAssessment, hasUnfinishedDraft, projects, storageStatus, notice, shapePlans, projectOpenRevision, viewMode } = storeToRefs(store)
 const canvasRef = ref<InstanceType<typeof KnittingCanvas> | null>(null)
 const sidebarExpanded = ref(loadSidebarExpanded())
 const portraitLayout = ref(false)
@@ -28,6 +31,18 @@ const rowPlanOpen = ref(false)
 const exportingPdf = ref(false)
 async function downloadPdf(): Promise<void> {
   if (exportingPdf.value) return
+  if (viewMode.value === 'drawing') {
+    exportingPdf.value = true
+    try {
+      const { drawingPdf, downloadDrawing } = await import('../components/exportDrawing')
+      const calculation = calculateDrawing(store.drawing, store.shapePlans, store.gauge, store.fabricGrid)
+      const bytes = await drawingPdf({ name: activeProject.value?.name ?? '绘图图解', drawing: store.drawing, calculation, shapes: store.shapes.filter(s => s.type !== 'path' || s.closed), gauge: store.gauge })
+      downloadDrawing(new Blob([new Uint8Array(bytes)], { type: 'application/pdf' }), activeProject.value?.name ?? '绘图图解', 'pdf')
+      store.showNotice('已发起绘图 PDF 下载，含分页针格、中文图例与针数核对。')
+    } catch (error) { store.showNotice(error instanceof Error ? error.message : '绘图 PDF 导出失败。') }
+    finally { exportingPdf.value = false }
+    return
+  }
   const project = store.readProjectSource()
   if (!project) return
   const snapshot = createCalculationSnapshot(project.document)
@@ -66,6 +81,10 @@ function toggleSidebar(): void {
   sidebarExpanded.value = !sidebarExpanded.value
   if (!portraitLayout.value) saveSidebarExpanded(sidebarExpanded.value)
   scheduleCanvasFit()
+}
+function openStitchLibrary(): void {
+  sidebarExpanded.value = true
+  nextTick(() => document.querySelector('.stitch-library')?.scrollIntoView({ block: 'start' }))
 }
 
 function confirmDiscardDraft(): boolean {
@@ -136,13 +155,15 @@ onBeforeUnmount(() => {
         <button v-if="portraitLayout" class="sidebar-close" type="button" @click="toggleSidebar">关闭参数栏</button>
         <GaugePanel />
         <ShapePropertyPanel />
+        <StitchLibrary v-if="viewMode === 'drawing'" />
       </aside>
 
       <section class="workspace">
         <CanvasToolbar :sidebar-expanded="sidebarExpanded" @toggle-sidebar="toggleSidebar"
           @fit="canvasRef?.fitCanvas()" @export="canvasRef?.exportCanvas()" />
+        <DrawingControls v-if="viewMode === 'drawing'" @library="openStitchLibrary" />
         <div class="plan-output-actions">
-          <button class="row-plan-open" type="button" @click="rowPlanOpen = true">查看逐行操作表</button>
+          <button v-if="viewMode !== 'drawing'" class="row-plan-open" type="button" @click="rowPlanOpen = true">查看逐行操作表</button>
           <button class="row-plan-open" type="button" :disabled="exportingPdf" :aria-busy="exportingPdf" @click="downloadPdf">{{ exportingPdf ? '正在生成 PDF…' : '导出 PDF' }}</button>
         </div>
         <div v-if="shapePlans.some((plan) => plan.calculationMessage)" class="calculation-message" role="status">

@@ -49,6 +49,10 @@ import type {
 } from './editor.persistence'
 import { createProjectFile } from './projectTransfer'
 import type { ExportedProjectFileV1 } from './projectTransfer'
+import { emptyDrawing } from '../core/drawing/types'
+import type { DrawingDocument, DrawingTool, PatternPlacement, PatternSample, StitchDefinition, StitchMark } from '../core/drawing/types'
+import { effectiveMarks, filledRegion, intersects, isDrawingDocument, replaceMarks, traceContours, uid } from '../core/drawing/drawing'
+import { stitchMap } from '../core/drawing/stitches'
 
 export type ProjectImportResult =
   | { status: 'imported'; projectId: string }
@@ -66,6 +70,7 @@ function clonePlain<T>(value: T): T {
 const cloneShapes = (value: Shape[]): Shape[] => clonePlain(value)
 
 interface HistorySnapshot {
+  drawing: DrawingDocument
   operationOverrides: Record<string, OperationOverrides>
   gaugeInput: GaugeInput
   fabric: FabricCanvas
@@ -171,6 +176,18 @@ export const useEditorStore = defineStore('editor', () => {
   )
   const fabric = ref<FabricCanvas>(clonePlain(persistedDocument?.fabric ?? defaultFabric))
   const shapes = ref<Shape[]>(initialShapes)
+  const drawing = ref<DrawingDocument>(clonePlain(persistedDocument.drawing ?? emptyDrawing()))
+  const drawingTool = ref<DrawingTool>('paint')
+  const activeStitchId = ref('knit')
+  const drawingDefinitions = computed(() => stitchMap(drawing.value.definitions))
+  const drawingMarks = computed(() => effectiveMarks(drawing.value))
+  const placementPreview = ref<PatternPlacement | null>(null)
+  const movingPlacementId = ref<string | null>(null)
+  const contourPreview = ref(false)
+  const contourCandidate = computed(() => {
+    const region = filledRegion(effectiveMarks(drawing.value, false), drawingDefinitions.value, fabricGrid.value.columnCount, fabricGrid.value.rowCount)
+    return { ...region, loops: traceContours(region.filled) }
+  })
   const selectedShapeId = ref<string | null>(
     validInitialSelection(persistedDocument?.selectedShapeId ?? initialShapes[0]?.id ?? null),
   )
@@ -373,6 +390,69 @@ export const useEditorStore = defineStore('editor', () => {
     }
   }, { flush: 'sync' })
 
+  function changeDrawing(change: (next: DrawingDocument) => void): void {
+    const next = clonePlain(drawing.value)
+    change(next)
+    if (!isDrawingDocument(next)) { showNotice('针法定义或小样范围无效，请检查后重试。'); return }
+    if (JSON.stringify(next) === JSON.stringify(drawing.value)) return
+    pushUndo(captureHistorySnapshot())
+    drawing.value = next
+  }
+  function paintDrawing(marks: StitchMark[]): void {
+    const valid = marks.filter(m => m.x >= 0 && m.y >= 0 && m.y < fabricGrid.value.rowCount && m.x + (drawingDefinitions.value.get(m.stitchId)?.span ?? 1) <= fabricGrid.value.columnCount)
+    changeDrawing(next => {
+      for (const p of next.placements) p.marks = p.marks.filter(m => !valid.some(v => intersects({ ...m, x: m.x + p.x, y: m.y + p.y }, v, drawingDefinitions.value)))
+      next.marks = replaceMarks(next.marks, valid, drawingDefinitions.value)
+      next.automaticMarks = (next.automaticMarks ?? []).filter(m => !valid.some(v => intersects(m, v, drawingDefinitions.value)))
+    })
+  }
+  function eraseDrawing(points: Point[]): void {
+    const hit = (m: StitchMark) => points.some(p => p.y === m.y && p.x >= m.x && p.x < m.x + drawingDefinitions.value.get(m.stitchId)!.span)
+    changeDrawing(next => {
+      next.marks = next.marks.filter(m => !hit(m))
+      next.automaticMarks = (next.automaticMarks ?? []).filter(m => !hit(m))
+      for (const p of next.placements) p.marks = p.marks.filter(m => !hit({ ...m, x: m.x + p.x, y: m.y + p.y }))
+    })
+  }
+  function saveSample(sample: PatternSample): void {
+    changeDrawing(next => { const index = next.samples.findIndex(s => s.id === sample.id); if (index < 0) next.samples.push(clonePlain(sample)); else next.samples[index] = clonePlain(sample) })
+  }
+  function deleteSample(id: string): void { changeDrawing(next => { next.samples = next.samples.filter(s => s.id !== id) }) }
+  function startPlacement(sample: PatternSample, movingId: string | null = null): void {
+    movingPlacementId.value = movingId
+    const old = drawing.value.placements.find(p => p.id === movingId)
+    placementPreview.value = { ...clonePlain(sample), id: movingId ?? uid(), x: old?.x ?? 0, y: old?.y ?? 0 }
+    drawingTool.value = 'place'; activeTool.value = 'stitch'
+  }
+  function confirmPlacement(): void {
+    const preview = placementPreview.value
+    if (!preview) return
+    if (preview.x < 0 || preview.y < 0 || preview.x + preview.width > fabricGrid.value.columnCount || preview.y + preview.height > fabricGrid.value.rowCount) { showNotice('花样超出画布，请移动预览位置。'); return }
+    changeDrawing(next => { next.placements = [...next.placements.filter(p => p.id !== movingPlacementId.value), clonePlain(preview)] })
+    cancelDrawingPreview()
+  }
+  function cancelDrawingPreview(): void { placementPreview.value = null; movingPlacementId.value = null; contourPreview.value = false; drawingTool.value = 'paint' }
+  function removePlacement(id: string): void { changeDrawing(next => { next.placements = next.placements.filter(p => p.id !== id) }) }
+  function saveCustomStitch(definition: StitchDefinition): void {
+    changeDrawing(next => { next.definitions.push(clonePlain(definition)) })
+    activeStitchId.value = definition.id; activeTool.value = 'stitch'; drawingTool.value = 'paint'
+  }
+  function setDrawingConvention(convention: DrawingDocument['convention']): void { changeDrawing(next => { next.convention = convention }) }
+  function generateDrawingContours(): void {
+    const candidate = contourCandidate.value
+    if (!candidate.loops.length) { showNotice('请先填写针法，再生成轮廓。'); return }
+    if (drawingMarks.value.some(m => m.x + drawingDefinitions.value.get(m.stitchId)!.span > fabricGrid.value.columnCount || m.y >= fabricGrid.value.rowCount)) { showNotice('有针法超出画布，请先调整。'); return }
+    pushUndo(captureHistorySnapshot())
+    const oldIds = new Set(drawing.value.generatedShapeIds)
+    const newShapes: PathShape[] = candidate.loops.map((loop, i) => ({ id: uid(), name: `花样衣片 ${i + 1}`, type: 'path', closed: true, nodes: loop.map(p => ({ anchor: { x: p.x * gauge.value.stitchWidthCm, y: p.y * gauge.value.rowHeightCm } })) }))
+    shapes.value = [...shapes.value.filter(s => !oldIds.has(s.id)), ...newShapes]
+    for (const id of oldIds) { delete shapeDirections.value[id]; delete shapeRoundingPolicies.value[id]; delete operationOverrides.value[id] }
+    drawing.value = { ...drawing.value, marks: drawing.value.marks.filter(m => !m.automatic), automaticMarks: candidate.automatic, generatedShapeIds: newShapes.map(s => s.id) }
+    selectedShapeId.value = newShapes[0].id; selectedPlanShapeId.value = newShapes[0].id
+    shapesRevision.value++; cancelDrawingPreview()
+    showNotice(`已沿填充边缘生成 ${newShapes.length} 个轮廓，内部补 ${candidate.automatic.length} 针下针。可继续修改路径或针法。`)
+  }
+
   function createPersistedDocument(): PersistedEditorDocument {
     const shapeIds = new Set(shapes.value.map((shape) => shape.id))
     const validSelection = (shapeId: string | null): string | null => (
@@ -388,6 +468,7 @@ export const useEditorStore = defineStore('editor', () => {
     return {
       version: EDITOR_DOCUMENT_VERSION,
       savedAt: new Date().toISOString(),
+      drawing: { ...clonePlain(drawing.value), generatedShapeIds: drawing.value.generatedShapeIds.filter(id => shapeIds.has(id)) },
       gaugeInput: clonePlain(gaugeInput.value),
       fabric: clonePlain(fabric.value),
       shapes: cloneShapes(mutationStart?.shapes ?? shapes.value),
@@ -439,6 +520,7 @@ export const useEditorStore = defineStore('editor', () => {
       shapesRevision,
       cardPositions,
       operationOverrides,
+      drawing,
     ],
     autoSave.schedule,
     { deep: true },
@@ -454,6 +536,7 @@ export const useEditorStore = defineStore('editor', () => {
 
   function captureHistorySnapshot(): HistorySnapshot {
     return {
+      drawing: clonePlain(drawing.value),
       operationOverrides: clonePlain(operationOverrides.value),
       gaugeInput: clonePlain(gaugeInput.value),
       fabric: clonePlain(fabric.value),
@@ -472,6 +555,8 @@ export const useEditorStore = defineStore('editor', () => {
 
   function restoreHistorySnapshot(entry: HistoryEntry): void {
     const { snapshot } = entry
+    drawing.value = clonePlain(snapshot.drawing)
+    cancelDrawingPreview()
     let shapesChanged = false
     operationOverrides.value = clonePlain(snapshot.operationOverrides)
     if (JSON.stringify(gaugeInput.value) !== JSON.stringify(snapshot.gaugeInput)) {
@@ -772,6 +857,7 @@ export const useEditorStore = defineStore('editor', () => {
     if (!deletedShape) return
     pushUndo(captureHistorySnapshot())
     shapes.value = shapes.value.filter((shape) => shape.id !== deletedShape.id)
+    drawing.value.generatedShapeIds = drawing.value.generatedShapeIds.filter(id => id !== deletedShape.id)
     const { [deletedShape.id]: _deletedPolicy, ...remainingPolicies } = shapeRoundingPolicies.value
     shapeRoundingPolicies.value = remainingPolicies
     const { [deletedShape.id]: _deletedDirection, ...remainingDirections } = shapeDirections.value
@@ -795,6 +881,9 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   function applyProjectDocument(document: PersistedEditorDocument): void {
+    drawing.value = clonePlain(document.drawing ?? emptyDrawing())
+    activeStitchId.value = 'knit'
+    cancelDrawingPreview()
     consumeRasterRuleNotice(document)
     autoSave.schedule()
     const nextShapes = cloneShapes(document.shapes)
@@ -1098,6 +1187,10 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   return {
+    drawing, drawingTool, activeStitchId, drawingDefinitions, drawingMarks,
+    placementPreview, movingPlacementId, contourPreview, contourCandidate,
+    paintDrawing, eraseDrawing, saveSample, deleteSample, startPlacement, confirmPlacement,
+    cancelDrawingPreview, removePlacement, saveCustomStitch, setDrawingConvention, generateDrawingContours,
     projects,
     activeProjectId,
     activeProject,

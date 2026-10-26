@@ -554,3 +554,20 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   .export-button { grid-column: 4; grid-row: 2; justify-self: end; }
   .tool-button { min-width: 44px; }
 }
+/* Drawing tools keep the same visible paths for mouse, Pencil and touch. */
+.drawing-controls { padding: 10px 14px; border-bottom: 1px solid #d9d0c3; background: #faf7f1; max-height: 42vh; overflow: auto; }
+.drawing-controls p { margin: 8px 0; font-size: 13px; }
+.drawing-buttons { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.drawing-controls button, .stitch-library button, .drawing-modal button, .drawing-controls select { min-height: 44px; min-width: 44px; border: 1px solid #c8c0b4; border-radius: 6px; padding: 8px 12px; background: #fffdf8; color: #383d35; cursor: pointer; }
+.drawing-buttons .active, .stitch-library .active, .drawing-controls .active { background: #e0ebe4; border: 2px solid #426c5a; }
+.stitch-library-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; max-height: 320px; overflow: auto; padding: 4px; margin-bottom: 12px; }
+.stitch-library-grid button { display: flex; align-items: center; gap: 8px; font-size: 12px; text-align: left; padding: 6px; overflow-wrap: anywhere; }
+.drawing-modal-backdrop { position: fixed; inset: 0; background: #292c276b; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.drawing-modal { max-width: 560px; width: 100%; max-height: 92dvh; overflow: auto; background: #fffdf8; border-radius: 12px; padding: 20px; box-shadow: 0 12px 44px #2224; }
+.drawing-modal.wide { max-width: 760px; }.drawing-modal header { display: flex; align-items: center; justify-content: space-between; position: sticky; top: -20px; background: #fffdf8; z-index: 1; padding: 10px 0; }.drawing-modal header h2 { font-size: 20px; margin: 0; }
+.drawing-modal label, .stitch-library label, .drawing-controls label { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.drawing-modal input, .drawing-modal textarea, .stitch-library input, .drawing-controls input { min-width: 0; min-height: 44px; width: 100%; padding: 8px; border: 1px solid #bfb7ab; border-radius: 4px; font: inherit; }.drawing-modal input[type=color] { width: 88px; padding: 4px; }
+.drawing-fields { display: flex; gap: 12px; flex-wrap: wrap; }.drawing-fields label { flex: 1 1 100px; }.drawing-modal .primary { background: #3f6957; color: white; }.drawing-modal button:disabled { opacity: 0.5; cursor: default; }
+.drawing-preview-banner { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 10px; border: 2px solid #5f8a72; margin-top: 8px; background: #eef4ed; }.drawing-preview-banner .drawing-fields { max-width: 250px; }
+.convention-label { max-width: 500px; }.drawing-table-scroll { overflow: auto; max-height: 260px; }.drawing-row-check table { border-collapse: collapse; min-width: 630px; width: 100%; font-size: 12px; }.drawing-row-check th, .drawing-row-check td { border: 1px solid #c5bcad; padding: 8px; text-align: left; }.drawing-issues { color: #974d3a; }.drawing-issues summary { min-height: 44px; padding: 10px 0; }
+@media (max-width: 900px) { .drawing-controls { padding: 8px; }.canvas-toolbar .segmented-control { flex-shrink: 0; }.drawing-modal { padding: 12px; }.drawing-modal header { top: -12px; }.stitch-library-grid { max-height: 280px; } }

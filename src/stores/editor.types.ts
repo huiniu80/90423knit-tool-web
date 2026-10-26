@@ -5,6 +5,7 @@ import type { KnittingInstruction } from '../core/knitting/planner.types'
 import type { RasterRow } from '../core/raster/raster.types'
 
 export type EditorTool =
+  | 'stitch'
   | 'select'
   | 'pan'
   | 'polygon'
@@ -14,7 +15,7 @@ export type EditorTool =
   | 'circle'
   | 'ellipse'
 
-export type ViewMode = 'outline' | 'grid' | 'overlay'
+export type ViewMode = 'outline' | 'grid' | 'overlay' | 'drawing'
 
 export interface ShapePlan {
   shapeId: string

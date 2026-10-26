@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useEditorStore } from '../stores/editor'
 import type { EditorTool } from '../stores/editor.types'
+import { calculateDrawing } from '../core/drawing/calculation'
 
 defineProps<{ sidebarExpanded: boolean }>()
 const emit = defineEmits<{ fit: []; export: []; toggleSidebar: [] }>()
@@ -22,6 +23,12 @@ const {
 
 const selectedPlanOverview = computed(() => {
   const plan = shapePlans.value.find((item) => item.shapeId === selectedShapeId.value)
+  if (viewMode.value === 'drawing') {
+    const result = calculateDrawing(store.drawing, shapePlans.value, store.gauge, store.fabricGrid)
+    const piece = result.pieces.find(p => p.id === selectedShapeId.value)
+    if (result.issues.length || !piece?.rows.length) return null
+    return { castOnStitches: piece.rows[0].input, totalRows: piece.rows.length, roundingPending: plan?.roundingPending ?? false }
+  }
   const first = plan?.instructions[0]
   if (!plan?.isFabric || !plan.canExport || !first) return null
   return {
@@ -104,9 +111,10 @@ function changeZoom(delta: number): void {
       <span>画布 {{ fabricGrid.columnCount }} 针 × {{ fabricGrid.rowCount }} 行 · 原点在左下角</span>
     </div>
     <div class="segmented-control compact" aria-label="显示模式">
-      <button :class="{ active: viewMode === 'outline' }" @click="viewMode = 'outline'">绘版</button>
-      <button :class="{ active: viewMode === 'grid' }" @click="viewMode = 'grid'">针格</button>
-      <button :class="{ active: viewMode === 'overlay' }" @click="viewMode = 'overlay'">量衣</button>
+      <button :class="{ active: viewMode === 'outline' }" @click="viewMode = 'outline'">编织步骤</button>
+      <button :class="{ active: viewMode === 'grid' }" @click="viewMode = 'grid'">针格图</button>
+      <button :class="{ active: viewMode === 'overlay' }" @click="viewMode = 'overlay'">尺寸</button>
+      <button :class="{ active: viewMode === 'drawing' }" @click="viewMode = 'drawing'">绘图</button>
     </div>
     <div class="zoom-control">
       <button type="button" @click="changeZoom(-2)">−</button>

@@ -8,11 +8,13 @@ import { detectPathSymmetry } from '../core/geometry/path'
 import type { OperationOverrides } from '../core/knitting/rowOperations'
 import { isCalculationSnapshot } from '../core/knitting/calculationSnapshot'
 import type { CalculationSnapshot } from '../core/knitting/calculationSnapshot'
+import type { DrawingDocument } from '../core/drawing/types'
+import { isDrawingDocument } from '../core/drawing/drawing'
 
 /** Legacy single-document key. Kept only for one-time migration. */
 export const EDITOR_STORAGE_KEY = 'knitting-pattern-planner:editor:v1'
 export const PROJECT_LIBRARY_STORAGE_KEY = 'knitting-pattern-planner:projects:v1'
-export const EDITOR_DOCUMENT_VERSION = 3
+export const EDITOR_DOCUMENT_VERSION = 4
 export const PROJECT_LIBRARY_VERSION = 1
 export const MAX_PROJECTS = 5
 export const MAX_RECYCLED_PROJECTS = 5
@@ -20,6 +22,7 @@ export const RECYCLE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 export const EDITOR_AUTOSAVE_DELAY_MS = 300
 
 export interface PersistedEditorDocument {
+  drawing?: DrawingDocument
   version: typeof EDITOR_DOCUMENT_VERSION
   savedAt: string
   gaugeInput: GaugeInput
@@ -199,12 +202,15 @@ export function isPersistedEditorDocument(value: unknown): value is PersistedEdi
     || (value.viewMode !== undefined
       && value.viewMode !== 'outline'
       && value.viewMode !== 'grid'
-      && value.viewMode !== 'overlay')
+      && value.viewMode !== 'overlay'
+      && value.viewMode !== 'drawing')
+    || (value.drawing !== undefined && !isDrawingDocument(value.drawing))
     || !isOptionalId(value.selectedShapeId)
     || !isOptionalId(value.selectedPlanShapeId)) return false
 
   const shapeIds = new Set(value.shapes.map((shape) => shape.id))
   return shapeIds.size === value.shapes.length
+    && (value.drawing?.generatedShapeIds ?? []).every(id => shapeIds.has(id))
     && Object.keys(value.operationOverrides ?? {}).every(shapeId => shapeIds.has(shapeId))
     && Object.keys(value.shapeDirections).every((shapeId) => shapeIds.has(shapeId))
     && Object.keys(value.shapeRoundingPolicies).every((shapeId) => shapeIds.has(shapeId))
@@ -230,11 +236,13 @@ export function migrateEditorDocument(value: unknown): PersistedEditorDocument |
         ? { ...candidate, editConstraint: { type: 'vertical-mirror', axisX: symmetry.axisX } }
         : candidate
     })
-    migrated = { ...migrated, version: EDITOR_DOCUMENT_VERSION, shapes }
+    migrated = { ...migrated, version: 3, shapes }
   }
+  if (migrated.version === 3) migrated = { ...migrated, version: EDITOR_DOCUMENT_VERSION }
   if (!isPersistedEditorDocument(migrated)) return null
   return {
       ...migrated,
+      ...(migrated.drawing && !migrated.drawing.convention ? { drawing: { ...migrated.drawing, convention: 'operation' as const } } : {}),
       shapeDirections: Object.fromEntries(Object.keys(migrated.shapeDirections).map((id) => [id, 'bottom-up'])),
       rasterOptions: { ...migrated.rasterOptions, mode: 'center' },
       ...(migrated.rasterOptions.mode !== 'center' ? { rasterRuleNoticePending: true } : {}),

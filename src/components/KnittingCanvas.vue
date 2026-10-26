@@ -51,6 +51,11 @@ import type { LineObstacle } from './markerLayout'
 import { deleteEditableNode, insertEdgeNode, nearestEditableEdge } from './nodeEditing'
 import type { SelectedEdge } from './nodeEditing'
 import { cardFromScreen, cardToScreen } from './cardCoordinates'
+import { drawStitch } from '../core/drawing/stitches'
+import { cells, intersects, replaceMarks, uid } from '../core/drawing/drawing'
+import type { DrawingTool, StitchMark } from '../core/drawing/types'
+import PatternSampleDialog from './PatternSampleDialog.vue'
+import { calculateDrawing } from '../core/drawing/calculation'
 
 type Corner = 'nw' | 'ne' | 'se' | 'sw'
 type Interaction =
@@ -186,6 +191,75 @@ let interactionFrameId: number | null = null
 let pendingInteractionPointer: { pointer: Point; directionSnap: boolean } | null = null
 let suppressNextStageClick = false
 const snapGuide = ref<{ axis: SnapAxis; value: number } | null>(null)
+const stitchStroke = ref<{ tool: DrawingTool; stitchId: string; points: Point[]; marks: StitchMark[]; previewOrigin?: Point } | null>(null)
+const capturedSample = ref<import('../core/drawing/types').PatternSample | null>(null)
+function gridPoint(pointer: Point): Point {
+  const p = worldFromScreen(pointer, true)
+  return { x: Math.floor(p.x / gauge.value.stitchWidthCm), y: Math.floor(p.y / gauge.value.rowHeightCm) }
+}
+function addStitchPoint(pointer: Point): void {
+  const point = gridPoint(pointer), stroke = stitchStroke.value
+  if (!stroke) return
+  const previous = stroke.points.at(-1) ?? point
+  const distance = Math.max(Math.abs(previous.x - point.x), Math.abs(previous.y - point.y))
+  for (let i = 0; i <= distance; i++) {
+    const p = { x: Math.round(previous.x + (point.x - previous.x) * (distance ? i / distance : 0)), y: Math.round(previous.y + (point.y - previous.y) * (distance ? i / distance : 0)) }
+    if (p.x < 0 || p.y < 0 || p.x >= fabricGrid.value.columnCount || p.y >= fabricGrid.value.rowCount) continue
+    stroke.points.push(p)
+    if (stroke.tool === 'paint') {
+      const def = store.drawingDefinitions.get(stroke.stitchId)!
+      if (p.x + def.span <= fabricGrid.value.columnCount && !stroke.marks.some(m => intersects(m, { ...p, id: '', stitchId: def.id }, store.drawingDefinitions))) stroke.marks.push({ ...p, id: uid(), stitchId: def.id })
+    }
+  }
+  if (store.placementPreview && stroke.tool === 'place') {
+    store.placementPreview.x = Math.max(0, point.x); store.placementPreview.y = Math.max(0, point.y)
+  }
+}
+function finishStitchStroke(): void {
+  const stroke = stitchStroke.value; if (!stroke) return
+  if (stroke.tool === 'paint') store.paintDrawing(stroke.marks)
+  if (stroke.tool === 'erase') store.eraseDrawing(stroke.points)
+  if (stroke.tool === 'sample' && stroke.points.length) {
+    const first = stroke.points[0], last = stroke.points.at(-1)!
+    const x = Math.min(first.x, last.x), y = Math.min(first.y, last.y), width = Math.abs(first.x - last.x) + 1, height = Math.abs(first.y - last.y) + 1
+    const selected = store.drawingMarks.filter(m => m.x >= x && m.y >= y && m.y < y + height && m.x + store.drawingDefinitions.get(m.stitchId)!.span <= x + width).map(m => ({ ...m, id: uid(), x: m.x - x, y: m.y - y, automatic: undefined }))
+    if (width <= 64 && height <= 64 && selected.length) capturedSample.value = { id: uid(), name: '框选花样', width, height, marks: selected }
+    else store.showNotice('框选需包含完整针法，范围最多为 64 × 64 格。')
+  }
+  stitchStroke.value = null
+}
+const drawingShapeConfig = computed<KonvaShapeConfig>(() => ({
+  listening: false,
+  sceneFunc(context) {
+    const ctx = context._context
+    const w = gauge.value.stitchWidthCm * zoom.value, h = gauge.value.rowHeightCm * zoom.value
+    const stroke = stitchStroke.value
+    let marks = store.drawingMarks
+    if (stroke?.tool === 'paint') marks = replaceMarks(marks, stroke.marks, store.drawingDefinitions)
+    if (stroke?.tool === 'erase') marks = marks.filter(m => !stroke.points.some(p => cells(m, store.drawingDefinitions).includes(`${p.x},${p.y}`)))
+    for (const m of marks) drawStitch(ctx, store.drawingDefinitions.get(m.stitchId)!, m.x * w, fabricHeightPx.value - (m.y + 1) * h, store.drawingDefinitions.get(m.stitchId)!.span * w, h)
+    if (store.contourPreview) {
+      for (const m of store.contourCandidate.automatic) drawStitch(ctx, store.drawingDefinitions.get('knit')!, m.x * w, fabricHeightPx.value - (m.y + 1) * h, w, h)
+      ctx.strokeStyle = '#287d72'; ctx.lineWidth = 2; ctx.setLineDash([6, 3])
+      for (const loop of store.contourCandidate.loops) { ctx.beginPath(); loop.forEach((p, i) => { if (i) ctx.lineTo(p.x * w, fabricHeightPx.value - p.y * h); else ctx.moveTo(p.x * w, fabricHeightPx.value - p.y * h) }); ctx.closePath(); ctx.stroke() }
+      ctx.setLineDash([])
+    }
+    if (store.placementPreview) {
+      const p = store.placementPreview
+      ctx.globalAlpha = 0.65
+      for (const m of p.marks) {
+        const global = { ...m, x: m.x + p.x, y: m.y + p.y }
+        drawStitch(ctx, store.drawingDefinitions.get(m.stitchId)!, global.x * w, fabricHeightPx.value - (global.y + 1) * h, store.drawingDefinitions.get(m.stitchId)!.span * w, h)
+        if (marks.some(old => intersects(old, global, store.drawingDefinitions))) { ctx.strokeStyle = '#ad4b40'; ctx.lineWidth = 2; ctx.strokeRect(global.x * w, fabricHeightPx.value - (global.y + 1) * h, store.drawingDefinitions.get(m.stitchId)!.span * w, h) }
+      }
+      ctx.globalAlpha = 1; ctx.strokeStyle = '#287d72'; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.strokeRect(p.x * w, fabricHeightPx.value - (p.y + p.height) * h, p.width * w, p.height * h); ctx.setLineDash([])
+    }
+    if (stroke?.tool === 'sample' && stroke.points.length) {
+      const a = stroke.points[0], b = stroke.points.at(-1)!
+      ctx.strokeStyle = '#287d72'; ctx.lineWidth = 2; ctx.strokeRect(Math.min(a.x, b.x) * w, fabricHeightPx.value - (Math.max(a.y, b.y) + 1) * h, (Math.abs(a.x - b.x) + 1) * w, (Math.abs(a.y - b.y) + 1) * h)
+    }
+  },
+}))
 
 const canvasBoundaryPadding = 24
 const annotationWidth = 264
@@ -1150,6 +1224,11 @@ function onPointerDown(event: KonvaEventObject<PointerEvent>): void {
     try { nativeTarget.setPointerCapture(event.evt.pointerId) } catch { /* Detached pointers are cancelled below. */ }
   }
   const name = targetName(event)
+  if (viewMode.value === 'drawing' && activeTool.value === 'stitch') {
+    event.evt.preventDefault(); suppressNextStageClick = true
+    stitchStroke.value = { tool: store.drawingTool, stitchId: store.activeStitchId, points: [], marks: [], previewOrigin: store.placementPreview ? { x: store.placementPreview.x, y: store.placementPreview.y } : undefined }
+    addStitchPoint(pointer); return
+  }
   const annotationReset = annotationControlTarget(name, 'outline-reset:')
   if (annotationReset) {
     event.evt.preventDefault()
@@ -1454,6 +1533,7 @@ function onPointerMove(event: KonvaEventObject<PointerEvent>): void {
   }
   if (contentPointerId !== null && contentPointerId !== event.evt.pointerId) return
   if (pointerStart && Math.hypot(pointer.x - pointerStart.x, pointer.y - pointerStart.y) > 5) pointerMoved = true
+  if (stitchStroke.value) { addStitchPoint(pointer); return }
   const name = targetName(event)
   const annotationTarget = annotationCardTarget(name)
   const annotationDrag = annotationControlTarget(name, 'outline-drag:')
@@ -1477,6 +1557,8 @@ function onPointerMove(event: KonvaEventObject<PointerEvent>): void {
 }
 
 function cancelInteraction(): void {
+  if (stitchStroke.value?.previewOrigin && store.placementPreview) Object.assign(store.placementPreview, stitchStroke.value.previewOrigin)
+  stitchStroke.value = null
   if (interactionFrameId !== null) cancelAnimationFrame(interactionFrameId)
   interactionFrameId = null
   pendingInteractionPointer = null
@@ -1534,6 +1616,7 @@ function onPointerEnd(event: KonvaEventObject<PointerEvent>): void {
   if (cancelled) { cancelInteraction(); return }
   const control = pendingControlName
   const tapped = !pointerMoved
+  if (stitchStroke.value) finishStitchStroke()
   endInteraction()
   contentPointerId = null
   pointerStart = null
@@ -1765,6 +1848,15 @@ function fitCanvas(): void {
 }
 
 async function exportCanvas(): Promise<void> {
+  if (viewMode.value === 'drawing') {
+    try {
+      const { drawingPng, downloadDrawing } = await import('./exportDrawing')
+      const calculation = calculateDrawing(store.drawing, store.shapePlans, gauge.value, fabricGrid.value)
+      const blob = await drawingPng({ name: store.activeProject?.name ?? '绘图图解', drawing: store.drawing, calculation, shapes: shapes.value.filter(s => s.type !== 'path' || s.closed), gauge: gauge.value })
+      downloadDrawing(blob, store.activeProject?.name ?? '绘图图解', 'png'); store.showNotice('已发起绘图 PNG 下载，右侧留白包含中文针法图例。')
+    } catch (error) { store.showNotice(error instanceof Error ? error.message : '绘图导出失败，请重试。') }
+    return
+  }
   if (!shapePlans.value.some((plan) => plan.canExport)) {
     store.showNotice('没有可导出的有效织片，请先闭合或修正轮廓。源轮廓仍可保存。')
     return
@@ -1899,6 +1991,9 @@ watch(selectedShapeId, () => {
   if (selectedEdge.value?.shapeId !== selectedShapeId.value) selectedEdge.value = null
 })
 watch(viewMode, (mode, previousMode) => {
+  cancelInteraction(); store.cancelDrawingPreview()
+  if (mode === 'drawing') activeTool.value = 'stitch'
+  else if (activeTool.value === 'stitch') activeTool.value = 'path'
   if (mode === 'grid' && previousMode !== 'grid') selectedGridAnnotationSegment.value = null
 })
 watch(() => shapes.value.map((shape) => shape.id), (shapeIds) => {
@@ -1945,6 +2040,9 @@ defineExpose({ fitCanvas, exportCanvas })
             <v-path v-else-if="shape.type === 'path'" :config="shapeConfig(shape)" />
             <v-line v-else :config="shapeConfig(shape)" />
           </template>
+
+          <v-shape v-if="viewMode === 'drawing'" :config="drawingShapeConfig" />
+          <v-shape v-if="viewMode === 'drawing'" :config="gridShapeConfig" />
 
           <template v-if="selectionRect && !exportingCanvas">
             <v-line v-if="mirrorAxisLine" :config="{
@@ -2226,5 +2324,6 @@ defineExpose({ fitCanvas, exportCanvas })
       <span v-if="selectedNodeIndex !== null && !canDeleteNode">节点已达下限</span>
       <button type="button" :aria-pressed="freeDirection" @click.stop="freeDirection = !freeDirection">{{ freeDirection ? '自由方向' : '方向吸附' }}</button>
     </div>
+    <PatternSampleDialog v-if="capturedSample" :source="capturedSample" @close="capturedSample = null" />
   </div>
 </template>
