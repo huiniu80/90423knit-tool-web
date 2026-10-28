@@ -56,6 +56,7 @@ import { cells, intersects, replaceMarks, uid } from '../core/drawing/drawing'
 import type { DrawingTool, StitchMark } from '../core/drawing/types'
 import PatternSampleDialog from './PatternSampleDialog.vue'
 import { calculateDrawing } from '../core/drawing/calculation'
+import { completeDrawingMarks } from '../core/drawing/chart'
 
 type Corner = 'nw' | 'ne' | 'se' | 'sw'
 type Interaction =
@@ -222,44 +223,53 @@ function finishStitchStroke(): void {
   if (stroke.tool === 'sample' && stroke.points.length) {
     const first = stroke.points[0], last = stroke.points.at(-1)!
     const x = Math.min(first.x, last.x), y = Math.min(first.y, last.y), width = Math.abs(first.x - last.x) + 1, height = Math.abs(first.y - last.y) + 1
-    const selected = store.drawingMarks.filter(m => m.x >= x && m.y >= y && m.y < y + height && m.x + store.drawingDefinitions.get(m.stitchId)!.span <= x + width).map(m => ({ ...m, id: uid(), x: m.x - x, y: m.y - y, automatic: undefined }))
-    if (width <= 64 && height <= 64 && selected.length) capturedSample.value = { id: uid(), name: '框选花样', width, height, marks: selected }
+    const sample = store.captureDrawingSample(x, y, width, height)
+    if (sample) capturedSample.value = sample
     else store.showNotice('框选需包含完整针法，范围最多为 64 × 64 格。')
   }
   stitchStroke.value = null
 }
-const drawingShapeConfig = computed<KonvaShapeConfig>(() => ({
-  listening: false,
-  sceneFunc(context) {
-    const ctx = context._context
-    const w = gauge.value.stitchWidthCm * zoom.value, h = gauge.value.rowHeightCm * zoom.value
-    const stroke = stitchStroke.value
-    let marks = store.drawingMarks
-    if (stroke?.tool === 'paint') marks = replaceMarks(marks, stroke.marks, store.drawingDefinitions)
-    if (stroke?.tool === 'erase') marks = marks.filter(m => !stroke.points.some(p => cells(m, store.drawingDefinitions).includes(`${p.x},${p.y}`)))
-    for (const m of marks) drawStitch(ctx, store.drawingDefinitions.get(m.stitchId)!, m.x * w, fabricHeightPx.value - (m.y + 1) * h, store.drawingDefinitions.get(m.stitchId)!.span * w, h)
-    if (store.contourPreview) {
-      for (const m of store.contourCandidate.automatic) drawStitch(ctx, store.drawingDefinitions.get('knit')!, m.x * w, fabricHeightPx.value - (m.y + 1) * h, w, h)
-      ctx.strokeStyle = '#287d72'; ctx.lineWidth = 2; ctx.setLineDash([6, 3])
-      for (const loop of store.contourCandidate.loops) { ctx.beginPath(); loop.forEach((p, i) => { if (i) ctx.lineTo(p.x * w, fabricHeightPx.value - p.y * h); else ctx.moveTo(p.x * w, fabricHeightPx.value - p.y * h) }); ctx.closePath(); ctx.stroke() }
-      ctx.setLineDash([])
-    }
-    if (store.placementPreview) {
-      const p = store.placementPreview
-      ctx.globalAlpha = 0.65
-      for (const m of p.marks) {
-        const global = { ...m, x: m.x + p.x, y: m.y + p.y }
-        drawStitch(ctx, store.drawingDefinitions.get(m.stitchId)!, global.x * w, fabricHeightPx.value - (global.y + 1) * h, store.drawingDefinitions.get(m.stitchId)!.span * w, h)
-        if (marks.some(old => intersects(old, global, store.drawingDefinitions))) { ctx.strokeStyle = '#ad4b40'; ctx.lineWidth = 2; ctx.strokeRect(global.x * w, fabricHeightPx.value - (global.y + 1) * h, store.drawingDefinitions.get(m.stitchId)!.span * w, h) }
+const drawingShapeConfig = computed<KonvaShapeConfig>(() => {
+  // Read reactive inputs here so each edit supplies Konva a new drawing function.
+  const w = gauge.value.stitchWidthCm * zoom.value, h = gauge.value.rowHeightCm * zoom.value
+  const height = fabricHeightPx.value, definitions = store.drawingDefinitions
+  const stroke = stitchStroke.value
+  let marks = store.drawingMarks
+  if (stroke?.tool === 'paint') marks = replaceMarks(marks, stroke.marks, definitions)
+  if (stroke?.tool === 'erase') marks = marks.filter(m => !stroke.points.some(p => cells(m, definitions).includes(`${p.x},${p.y}`)))
+  marks = completeDrawingMarks(store.drawingBase, marks, definitions)
+  const contour = store.contourPreview ? store.contourCandidate : null
+  const placement = store.placementPreview ? { ...store.placementPreview } : null
+  const sampleBounds = stroke?.tool === 'sample' && stroke.points.length
+    ? { first: stroke.points[0], last: stroke.points.at(-1)! } : null
+  return {
+    listening: false,
+    sceneFunc(context) {
+      const ctx = context._context
+      for (const m of marks) drawStitch(ctx, definitions.get(m.stitchId)!, m.x * w, height - (m.y + 1) * h, definitions.get(m.stitchId)!.span * w, h)
+      if (contour) {
+        for (const m of contour.automatic) drawStitch(ctx, definitions.get('knit')!, m.x * w, height - (m.y + 1) * h, w, h)
+        ctx.strokeStyle = '#287d72'; ctx.lineWidth = 2; ctx.setLineDash([6, 3])
+        for (const loop of contour.loops) { ctx.beginPath(); loop.forEach((p, i) => { if (i) ctx.lineTo(p.x * w, height - p.y * h); else ctx.moveTo(p.x * w, height - p.y * h) }); ctx.closePath(); ctx.stroke() }
+        ctx.setLineDash([])
       }
-      ctx.globalAlpha = 1; ctx.strokeStyle = '#287d72'; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.strokeRect(p.x * w, fabricHeightPx.value - (p.y + p.height) * h, p.width * w, p.height * h); ctx.setLineDash([])
-    }
-    if (stroke?.tool === 'sample' && stroke.points.length) {
-      const a = stroke.points[0], b = stroke.points.at(-1)!
-      ctx.strokeStyle = '#287d72'; ctx.lineWidth = 2; ctx.strokeRect(Math.min(a.x, b.x) * w, fabricHeightPx.value - (Math.max(a.y, b.y) + 1) * h, (Math.abs(a.x - b.x) + 1) * w, (Math.abs(a.y - b.y) + 1) * h)
-    }
-  },
-}))
+      if (placement) {
+        const p = placement
+        ctx.globalAlpha = 0.65
+        for (const m of p.marks) {
+          const global = { ...m, x: m.x + p.x, y: m.y + p.y }
+          drawStitch(ctx, definitions.get(m.stitchId)!, global.x * w, height - (global.y + 1) * h, definitions.get(m.stitchId)!.span * w, h)
+          if (marks.some(old => intersects(old, global, definitions))) { ctx.strokeStyle = '#ad4b40'; ctx.lineWidth = 2; ctx.strokeRect(global.x * w, height - (global.y + 1) * h, definitions.get(m.stitchId)!.span * w, h) }
+        }
+        ctx.globalAlpha = 1; ctx.strokeStyle = '#287d72'; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.strokeRect(p.x * w, height - (p.y + p.height) * h, p.width * w, p.height * h); ctx.setLineDash([])
+      }
+      if (sampleBounds) {
+        const a = sampleBounds.first, b = sampleBounds.last
+        ctx.strokeStyle = '#287d72'; ctx.lineWidth = 2; ctx.strokeRect(Math.min(a.x, b.x) * w, height - (Math.max(a.y, b.y) + 1) * h, (Math.abs(a.x - b.x) + 1) * w, (Math.abs(a.y - b.y) + 1) * h)
+      }
+    },
+  }
+})
 
 const canvasBoundaryPadding = 24
 const annotationWidth = 264
@@ -1991,9 +2001,7 @@ watch(selectedShapeId, () => {
   if (selectedEdge.value?.shapeId !== selectedShapeId.value) selectedEdge.value = null
 })
 watch(viewMode, (mode, previousMode) => {
-  cancelInteraction(); store.cancelDrawingPreview()
-  if (mode === 'drawing') activeTool.value = 'stitch'
-  else if (activeTool.value === 'stitch') activeTool.value = 'path'
+  cancelInteraction()
   if (mode === 'grid' && previousMode !== 'grid') selectedGridAnnotationSegment.value = null
 })
 watch(() => shapes.value.map((shape) => shape.id), (shapeIds) => {

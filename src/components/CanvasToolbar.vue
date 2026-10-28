@@ -114,7 +114,7 @@ function changeZoom(delta: number): void {
       <button :class="{ active: viewMode === 'outline' }" @click="viewMode = 'outline'">编织步骤</button>
       <button :class="{ active: viewMode === 'grid' }" @click="viewMode = 'grid'">针格图</button>
       <button :class="{ active: viewMode === 'overlay' }" @click="viewMode = 'overlay'">尺寸</button>
-      <button :class="{ active: viewMode === 'drawing' }" @click="viewMode = 'drawing'">绘图</button>
+      <button :class="{ active: viewMode === 'drawing' }" @click="store.enterDrawing()">绘图</button>
     </div>
     <div class="zoom-control">
       <button type="button" @click="changeZoom(-2)">−</button>

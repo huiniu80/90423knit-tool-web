@@ -1,4 +1,4 @@
-import { computed, onScopeDispose, ref, watch } from 'vue'
+import { computed, onScopeDispose, ref, shallowRef, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { calculateFabricGrid, calculateGauge } from '../core/gauge/gauge'
 import { assessGrid } from '../core/gauge/gridConstraints'
@@ -53,6 +53,7 @@ import { emptyDrawing } from '../core/drawing/types'
 import type { DrawingDocument, DrawingTool, PatternPlacement, PatternSample, StitchDefinition, StitchMark } from '../core/drawing/types'
 import { effectiveMarks, filledRegion, intersects, isDrawingDocument, replaceMarks, traceContours, uid } from '../core/drawing/drawing'
 import { stitchMap } from '../core/drawing/stitches'
+import { completeDrawingMarks, drawingBaseMarks } from '../core/drawing/chart'
 
 export type ProjectImportResult =
   | { status: 'imported'; projectId: string }
@@ -184,10 +185,7 @@ export const useEditorStore = defineStore('editor', () => {
   const placementPreview = ref<PatternPlacement | null>(null)
   const movingPlacementId = ref<string | null>(null)
   const contourPreview = ref(false)
-  const contourCandidate = computed(() => {
-    const region = filledRegion(effectiveMarks(drawing.value, false), drawingDefinitions.value, fabricGrid.value.columnCount, fabricGrid.value.rowCount)
-    return { ...region, loops: traceContours(region.filled) }
-  })
+  const contourCandidate = shallowRef<(ReturnType<typeof filledRegion> & { loops: Point[][] }) | null>(null)
   const selectedShapeId = ref<string | null>(
     validInitialSelection(persistedDocument?.selectedShapeId ?? initialShapes[0]?.id ?? null),
   )
@@ -208,8 +206,8 @@ export const useEditorStore = defineStore('editor', () => {
   const rasterOptions = ref<RasterOptions>(
     clonePlain(persistedDocument?.rasterOptions ?? defaultRasterOptions),
   )
-  const activeTool = ref<EditorTool>('path')
   const viewMode = ref<ViewMode>(persistedDocument?.viewMode ?? 'overlay')
+  const activeTool = ref<EditorTool>(viewMode.value === 'drawing' ? 'stitch' : 'path')
   const draftPoints = ref<Point[]>([])
   const draftPathNodes = ref<PathNode[]>([])
   const draftTool = ref<'polygon' | 'path' | null>(null)
@@ -398,6 +396,49 @@ export const useEditorStore = defineStore('editor', () => {
     pushUndo(captureHistorySnapshot())
     drawing.value = next
   }
+  const drawingBase = computed(() => drawingBaseMarks(shapePlans.value, gauge.value))
+  const drawingDisplayMarks = computed(() => completeDrawingMarks(drawingBase.value, drawingMarks.value, drawingDefinitions.value))
+
+  function captureDrawingSample(x: number, y: number, width: number, height: number): PatternSample | null {
+    if (width < 1 || height < 1 || width > 64 || height > 64) return null
+    const marks = drawingDisplayMarks.value
+      .filter(m => m.x >= x && m.y >= y && m.y < y + height && m.x + drawingDefinitions.value.get(m.stitchId)!.span <= x + width)
+      .map(m => ({ ...m, id: uid(), x: m.x - x, y: m.y - y, automatic: undefined }))
+    return marks.length ? { id: uid(), name: '框选花样', width, height, marks } : null
+  }
+
+  function clearDrawingContours(): void {
+    contourPreview.value = false
+    contourCandidate.value = null
+  }
+  watch([drawing, gaugeInput, fabric], () => {
+    if (contourPreview.value) showNotice('图案或尺寸已改变，请重新点击生成轮廓。')
+    clearDrawingContours()
+  }, { deep: true, flush: 'sync' })
+
+  function requestDrawingContours(): void {
+    clearDrawingContours()
+    if (drawingMarks.value.some(m => m.x + drawingDefinitions.value.get(m.stitchId)!.span > fabricGrid.value.columnCount || m.y >= fabricGrid.value.rowCount)) {
+      showNotice('有针法超出画布，请先调整。'); return
+    }
+    const region = filledRegion(effectiveMarks(drawing.value, false), drawingDefinitions.value, fabricGrid.value.columnCount, fabricGrid.value.rowCount)
+    const loops = traceContours(region.filled)
+    if (!loops.length) { showNotice('请先填写针法，再生成轮廓。'); return }
+    contourCandidate.value = { ...region, loops }
+    contourPreview.value = true
+  }
+
+  function enterDrawing(): void {
+    cancelDrawingPreview()
+    viewMode.value = 'drawing'
+    activeTool.value = 'stitch'
+  }
+
+  watch(viewMode, mode => {
+    cancelDrawingPreview()
+    if (mode === 'drawing') activeTool.value = 'stitch'
+    else if (activeTool.value === 'stitch') activeTool.value = 'path'
+  }, { flush: 'sync' })
   function paintDrawing(marks: StitchMark[]): void {
     const valid = marks.filter(m => m.x >= 0 && m.y >= 0 && m.y < fabricGrid.value.rowCount && m.x + (drawingDefinitions.value.get(m.stitchId)?.span ?? 1) <= fabricGrid.value.columnCount)
     changeDrawing(next => {
@@ -431,7 +472,7 @@ export const useEditorStore = defineStore('editor', () => {
     changeDrawing(next => { next.placements = [...next.placements.filter(p => p.id !== movingPlacementId.value), clonePlain(preview)] })
     cancelDrawingPreview()
   }
-  function cancelDrawingPreview(): void { placementPreview.value = null; movingPlacementId.value = null; contourPreview.value = false; drawingTool.value = 'paint' }
+  function cancelDrawingPreview(): void { placementPreview.value = null; movingPlacementId.value = null; clearDrawingContours(); drawingTool.value = 'paint' }
   function removePlacement(id: string): void { changeDrawing(next => { next.placements = next.placements.filter(p => p.id !== id) }) }
   function saveCustomStitch(definition: StitchDefinition): void {
     changeDrawing(next => { next.definitions.push(clonePlain(definition)) })
@@ -440,7 +481,7 @@ export const useEditorStore = defineStore('editor', () => {
   function setDrawingConvention(convention: DrawingDocument['convention']): void { changeDrawing(next => { next.convention = convention }) }
   function generateDrawingContours(): void {
     const candidate = contourCandidate.value
-    if (!candidate.loops.length) { showNotice('请先填写针法，再生成轮廓。'); return }
+    if (!contourPreview.value || !candidate) { showNotice('请先点击生成轮廓，预览后再确认。'); return }
     if (drawingMarks.value.some(m => m.x + drawingDefinitions.value.get(m.stitchId)!.span > fabricGrid.value.columnCount || m.y >= fabricGrid.value.rowCount)) { showNotice('有针法超出画布，请先调整。'); return }
     pushUndo(captureHistorySnapshot())
     const oldIds = new Set(drawing.value.generatedShapeIds)
@@ -875,7 +916,7 @@ export const useEditorStore = defineStore('editor', () => {
     draftPathNodes.value = []
     draftTool.value = null
     drawingSessionId.value = null
-    activeTool.value = 'path'
+    activeTool.value = viewMode.value === 'drawing' ? 'stitch' : 'path'
     rasterCache.clear()
     instructionCache.clear()
   }
@@ -1187,10 +1228,11 @@ export const useEditorStore = defineStore('editor', () => {
   }
 
   return {
-    drawing, drawingTool, activeStitchId, drawingDefinitions, drawingMarks,
+    drawing, drawingTool, activeStitchId, drawingDefinitions, drawingMarks, drawingBase, drawingDisplayMarks,
     placementPreview, movingPlacementId, contourPreview, contourCandidate,
     paintDrawing, eraseDrawing, saveSample, deleteSample, startPlacement, confirmPlacement,
     cancelDrawingPreview, removePlacement, saveCustomStitch, setDrawingConvention, generateDrawingContours,
+    enterDrawing, requestDrawingContours, clearDrawingContours, captureDrawingSample,
     projects,
     activeProjectId,
     activeProject,

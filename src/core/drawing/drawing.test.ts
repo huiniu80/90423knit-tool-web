@@ -6,6 +6,7 @@ import { cells, createPreset, effectiveMarks, filledRegion, isDrawingDocument, o
 import { emptyDrawing } from './types'
 import type { StitchMark } from './types'
 import { calculateDrawing } from './calculation'
+import { completeDrawingMarks, drawingBaseMarks } from './chart'
 import type { ShapePlan } from '../../stores/editor.types'
 const mark = (x: number, y: number, stitchId = 'knit'): StitchMark => ({ id: `${x}:${y}:${stitchId}`, x, y, stitchId })
 const defs = stitchMap()
@@ -73,6 +74,20 @@ describe('手织绘图源数据与边缘', () => {
   })
 })
 describe('针法计算', () => {
+  it('默认显示不填无效、错位或重叠针位，多针覆盖及擦除恢复完整底稿', () => {
+    const plan = piece(3, 2)
+    const base = drawingBaseMarks([plan], gauge)
+    expect(base).toHaveLength(6)
+    const multi = [mark(0, 0, 'k2tog')]
+    const displayed = completeDrawingMarks(base, multi, defs)
+    expect(displayed.filter(m => m.y === 0).map(m => m.stitchId).sort()).toEqual(['k2tog', 'knit'])
+    expect(completeDrawingMarks(base, [], defs)).toEqual(base)
+    expect(base).toHaveLength(6)
+    expect(drawingBaseMarks([{ ...plan, canExport: false }], gauge)).toEqual([])
+    expect(drawingBaseMarks([{ ...plan, rasterRows: plan.rasterRows.map(r => ({ ...r, originXCm: .5 })) }], gauge)).toEqual([])
+    expect(drawingBaseMarks([plan, { ...plan, shapeId: 'other' }], gauge)).toEqual([])
+    expect(completeDrawingMarks([], [mark(5, 5, 'purl')], defs)).toEqual([mark(5, 5, 'purl')])
+  })
   it('正面外观图符保持不变，逐行完整列出上下针的实际动作', () => {
     const doc = emptyDrawing(); doc.marks = [mark(0, 0, 'purl'), mark(0, 1, 'purl')]
     const before = JSON.stringify(doc)

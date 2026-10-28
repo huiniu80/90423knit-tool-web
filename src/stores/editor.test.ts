@@ -409,6 +409,63 @@ describe('Editor Store', () => {
     restored.$dispose()
   })
 
+  it('绘图方案刷新、同模式打开、导入和回收站恢复默认填针法，下针内容保留', async () => {
+    vi.useFakeTimers()
+    const storage = new MemoryStorage()
+    stubBrowser(storage)
+    const store = useEditorStore()
+    store.enterDrawing()
+    store.paintDrawing([{ id: 'purl', x: 1, y: 1, stitchId: 'purl' }])
+    store.activeTool = 'path'; store.activeStitchId = 'purl'; store.drawingTool = 'erase'
+    await nextTick(); vi.advanceTimersByTime(300); store.$dispose()
+    setActivePinia(createPinia())
+    const restored = useEditorStore()
+    expect(restored.viewMode).toBe('drawing')
+    expect(restored.activeTool).toBe('stitch')
+    expect(restored.drawingTool).toBe('paint')
+    expect(restored.activeStitchId).toBe('knit')
+    expect(restored.drawing.marks[0]?.stitchId).toBe('purl')
+    expect(restored.canUndo).toBe(false)
+    const firstId = restored.activeProjectId
+    restored.activeTool = 'pan'; restored.activeStitchId = 'purl'; restored.drawingTool = 'erase'
+    expect(restored.activateProject(firstId)).toBe(true)
+    expect(restored.activeTool).toBe('stitch')
+    expect(restored.activeStitchId).toBe('knit')
+    expect(restored.drawingTool).toBe('paint')
+    const file = restored.createProjectExport()!
+    restored.activeTool = 'path'
+    expect(restored.importProject(file).status).toBe('imported')
+    expect(restored.activeTool).toBe('stitch')
+    restored.createProject()
+    expect(restored.activeTool).toBe('path')
+    restored.deleteProject(firstId)
+    expect(restored.restoreRecycledProject(restored.recycledProjects[0]!.id).status).toBe('imported')
+    expect(restored.activeTool).toBe('stitch')
+    expect(restored.activeStitchId).toBe('knit')
+    expect(restored.drawingDisplayMarks[0]?.stitchId).toBe('purl')
+    restored.$dispose()
+  })
+  it('再次点绘图回到填写，保留当前选针，模式切换与工具初始化不占内容历史', () => {
+    stubBrowser(new MemoryStorage())
+    const store = useEditorStore()
+    store.enterDrawing()
+    store.activeStitchId = 'purl'; store.activeTool = 'path'
+    store.enterDrawing()
+    expect(store.activeTool).toBe('stitch')
+    expect(store.activeStitchId).toBe('purl')
+    store.startPlacement({ id: 's', name: '小样', width: 1, height: 1, marks: [{ id: 'm', x: 0, y: 0, stitchId: 'knit' }] })
+    store.enterDrawing()
+    expect(store.placementPreview).toBeNull()
+    expect(store.drawingTool).toBe('paint')
+    expect(store.canUndo).toBe(false)
+    store.viewMode = 'grid'
+    expect(store.activeTool).toBe('path')
+    store.activeTool = 'pan'; store.viewMode = 'drawing'
+    expect(store.activeTool).toBe('stitch')
+    store.activeTool = 'path'
+    expect(store.activeTool).toBe('path')
+    store.$dispose()
+  })
   it('刷新恢复显示模式，但不恢复绘制草稿、缩放和当前工具', async () => {
     vi.useFakeTimers()
     const storage = new MemoryStorage()

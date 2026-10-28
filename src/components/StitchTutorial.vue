@@ -2,12 +2,12 @@
 import { ref, watch } from 'vue'
 import type { StitchDefinition } from '../core/drawing/types'
 import StitchSymbol from './StitchSymbol.vue'
-const props = defineProps<{ definition: StitchDefinition }>()
+const props = withDefaults(defineProps<{ definition: StitchDefinition; initiallyOpen?: boolean }>(), { initiallyOpen: true })
 const step = ref(0), enlarged = ref(false)
 watch(() => props.definition.id, () => { step.value = 0 })
 </script>
 <template>
-  <details class="stitch-tutorial" open>
+  <details class="stitch-tutorial" :open="initiallyOpen || undefined">
     <summary>如何编织 · {{ definition.name }}</summary>
     <p>消耗 {{ definition.input }} 针 → 生成 {{ definition.output }} 针；占 {{ definition.span }} 格。</p>
     <div class="symbol-example"><StitchSymbol :definition="definition" /><span>针格符号示例：一个符号表示一次完整操作。</span></div>

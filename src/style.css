@@ -529,7 +529,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .canvas-toolbar .tool-group { flex: 0 0 auto; }
 .export-button { min-height: 44px; }
 .sidebar-backdrop { position: absolute; inset: 0; z-index: 9; border: 0; background: rgba(20,31,27,.35); }
-.sidebar-close { display: block; min-height: 44px; margin: 12px; padding: 8px 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--forest); }
+.sidebar-close { position: sticky; top: 12px; z-index: 2; display: block; min-height: 44px; margin: 12px; padding: 8px 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--forest); }
 
 @media (min-width: 901px) and (max-width: 1400px) {
   .canvas-toolbar { overflow-x: auto; }

@@ -28,9 +28,10 @@ function preset(id: string) { if (!store.drawing.convention) { store.showNotice(
         <button v-for="d in definitions" :key="d.id" :title="d.name" :aria-pressed="store.activeStitchId === d.id" :class="{ active: store.activeStitchId === d.id }" @mouseenter="hovered = d.id" @mouseleave="hovered = null" @click="choose(d)"><StitchSymbol :definition="d" /><span>{{ d.name }}</span></button>
       </div>
     </details>
+    <p class="stitch-selection" aria-live="polite"><strong>{{ store.drawingDefinitions.get(store.activeStitchId)?.name }}</strong><span>占 {{ store.drawingDefinitions.get(store.activeStitchId)?.span }} 格 · 消耗 {{ store.drawingDefinitions.get(store.activeStitchId)?.input }} 针 → 生成 {{ store.drawingDefinitions.get(store.activeStitchId)?.output }} 针</span></p>
     <button @click="customSource = undefined; customOpen = true">＋ 自定义针法</button>
     <button v-if="selected.custom" @click="customSource = selected; customOpen = true">另存新版针法</button>
-    <StitchTutorial :definition="selected" />
+    <StitchTutorial :definition="selected" :initially-open="false" />
     <p>{{ stitchReading(selected, store.drawing.convention) }}</p>
     <h2>花样小样</h2>
     <p>先画一小块，再复制到图解；可独立移动和修改。</p>
@@ -43,4 +44,18 @@ function preset(id: string) { if (!store.drawing.convention) { store.showNotice(
     <PatternSampleDialog v-if="sampleOpen" :source="sampleSource" :placement-id="placementId" @close="sampleOpen = false" />
   </section>
 </template>
-<style scoped>.stitch-library { padding: 16px; border-top: 1px solid #d3c9bb; }.stitch-library h2 { font-size: 18px; margin: 18px 0 10px; }.stitch-library summary { min-height: 44px; padding: 10px 0; }.stitch-library article { padding: 12px 0; border-bottom: 1px solid #ddd; }.stitch-library small { display: block; }.stitch-library details > button { display: block; width: 100%; margin-bottom: 6px; }</style>
+<style scoped>
+.stitch-library { padding: 12px; border-top: 1px solid #d3c9bb; }
+.stitch-library h2 { font-size: 16px; margin: 12px 0 8px; }
+.stitch-library summary { min-height: 44px; padding: 10px 0; }
+.stitch-library article { padding: 12px 0; border-bottom: 1px solid #ddd; }
+.stitch-library small { display: block; }
+.stitch-library details > button { display: block; width: 100%; margin-bottom: 6px; }
+.stitch-library-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; max-height: 220px; padding: 2px; margin-bottom: 8px; }
+.stitch-library-grid button { flex-direction: column; justify-content: center; gap: 2px; height: 52px; padding: 3px; min-width: 44px; font-size: 11px; line-height: 14px; }
+.stitch-library-grid button span { width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
+.stitch-library-grid :deep(.stitch-symbol) { width: 28px; height: 28px; }
+.stitch-selection { font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.stitch-selection strong, .stitch-selection span { display: block; }
+@media (max-width: 900px) { .stitch-library { scroll-margin-top: 68px; } }
+</style>
