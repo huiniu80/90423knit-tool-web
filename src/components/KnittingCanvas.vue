@@ -249,9 +249,6 @@ const drawingShapeConfig = computed<KonvaShapeConfig>(() => {
       for (const m of marks) drawStitch(ctx, definitions.get(m.stitchId)!, m.x * w, height - (m.y + 1) * h, definitions.get(m.stitchId)!.span * w, h)
       if (contour) {
         for (const m of contour.automatic) drawStitch(ctx, definitions.get('knit')!, m.x * w, height - (m.y + 1) * h, w, h)
-        ctx.strokeStyle = '#287d72'; ctx.lineWidth = 2; ctx.setLineDash([6, 3])
-        for (const loop of contour.loops) { ctx.beginPath(); loop.forEach((p, i) => { if (i) ctx.lineTo(p.x * w, height - p.y * h); else ctx.moveTo(p.x * w, height - p.y * h) }); ctx.closePath(); ctx.stroke() }
-        ctx.setLineDash([])
       }
       if (placement) {
         const p = placement
@@ -269,6 +266,30 @@ const drawingShapeConfig = computed<KonvaShapeConfig>(() => {
       }
     },
   }
+})
+
+const drawingOutlineConfig = computed<KonvaShapeConfig>(() => {
+  const outlines = store.drawingContourDisplays, preview = store.drawingPreviewDisplays
+  const scale = zoom.value, height = fabricHeightPx.value
+  const showActual = store.showDrawingEdges
+  const editingId = activeTool.value === 'select' || activeTool.value === 'path' ? selectedShapeId.value : null
+  return { listening: false, sceneFunc(context) {
+    const ctx = context._context
+    const stroke = (points: Point[], color: string, width: number, dash: number[] = []) => {
+      ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.setLineDash(dash); ctx.beginPath()
+      points.forEach((p, i) => { if (i) ctx.lineTo(p.x * scale, height - p.y * scale); else ctx.moveTo(p.x * scale, height - p.y * scale) })
+      ctx.closePath(); ctx.stroke(); ctx.setLineDash([])
+    }
+    for (const outline of outlines) {
+      const actual = showActual || editingId === outline.source.id
+      stroke(outline.points, actual && !outline.fallback ? '#a8b5ae' : '#b24631', 2.4)
+      if (actual && !outline.fallback) stroke(flattenPath(outline.source), '#b24631', 1.8)
+    }
+    for (const outline of preview) {
+      stroke(outline.points, '#287d72', 2.4, [6, 3])
+      if (showActual && !outline.fallback) stroke(flattenPath(outline.source), '#5c8e7f', 1.4, [3, 3])
+    }
+  } }
 })
 
 const canvasBoundaryPadding = 24
@@ -918,7 +939,7 @@ function pathData(shape: PathShape): string {
 function shapeConfig(shape: Shape): Record<string, unknown> {
   const common = {
     name: `shape:${shape.id}`,
-    stroke: '#b24631',
+    stroke: viewMode.value === 'drawing' && store.drawing.generatedShapeIds.includes(shape.id) ? 'transparent' : '#b24631',
     strokeWidth: selectedShapeId.value === shape.id ? 2.2 : 1.5,
     fill: showOutlineFill.value ? 'rgba(40, 125, 114, 0.16)' : 'transparent',
     fillEnabled: showOutlineFill.value,
@@ -2051,6 +2072,7 @@ defineExpose({ fitCanvas, exportCanvas })
 
           <v-shape v-if="viewMode === 'drawing'" :config="drawingShapeConfig" />
           <v-shape v-if="viewMode === 'drawing'" :config="gridShapeConfig" />
+          <v-shape v-if="viewMode === 'drawing'" :config="drawingOutlineConfig" />
 
           <template v-if="selectionRect && !exportingCanvas">
             <v-line v-if="mirrorAxisLine" :config="{

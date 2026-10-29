@@ -4,6 +4,9 @@ import type { Shape } from '../core/geometry/shape.types'
 import type { Gauge } from '../core/gauge/gauge.types'
 import { drawStitch, stitchMap, stitchReading } from '../core/drawing/stitches'
 import { flattenPath } from '../core/geometry/path'
+import { CONTOUR_DISPLAY_NOTE, drawingContourDisplays } from '../core/drawing/contourDisplay'
+import type { DisplayContour } from '../core/drawing/contourDisplay'
+import type { PathShape } from '../core/geometry/shape.types'
 
 export interface DrawingExport { name: string; drawing: DrawingDocument; calculation: DrawingCalculation; shapes: Shape[]; gauge: Gauge }
 const font = (ctx: CanvasRenderingContext2D, size: number, bold = false) => { ctx.font = `${bold ? 'bold ' : ''}${size}px "Microsoft YaHei", "PingFang SC", sans-serif`; ctx.fillStyle = '#222'; ctx.textBaseline = 'top' }
@@ -21,23 +24,28 @@ function bounds(marks: StitchMark[], defs: Map<string, StitchDefinition>) {
   const maxX = marks.reduce((n, m) => Math.max(n, m.x + defs.get(m.stitchId)!.span), 0), maxY = marks.reduce((n, m) => Math.max(n, m.y + 1), 0)
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
 }
-function drawChart(ctx: CanvasRenderingContext2D, data: DrawingExport, region: { x: number; y: number; width: number; height: number }, x: number, y: number, size: number) {
+function exportContours(data: DrawingExport): Map<string, DisplayContour> {
+  const ids = new Set(data.drawing.generatedShapeIds)
+  return new Map(drawingContourDisplays(data.shapes.filter((s): s is PathShape => s.type === 'path' && s.closed && ids.has(s.id)), data.gauge).map(c => [c.source.id, c]))
+}
+function drawChart(ctx: CanvasRenderingContext2D, data: DrawingExport, region: { x: number; y: number; width: number; height: number }, x: number, y: number, size: number, contours: Map<string, DisplayContour>) {
   const defs = stitchMap(data.drawing.definitions)
-  ctx.save(); ctx.beginPath(); ctx.rect(x, y, region.width * size, region.height * size); ctx.clip()
+  const outlinePad = contours.size ? size : 0
+  ctx.save(); ctx.beginPath(); ctx.rect(x - outlinePad, y - outlinePad, region.width * size + 2 * outlinePad, region.height * size + 2 * outlinePad); ctx.clip()
   for (const m of data.calculation.marks) if (m.y >= region.y && m.y < region.y + region.height && m.x + defs.get(m.stitchId)!.span > region.x && m.x < region.x + region.width) drawStitch(ctx, defs.get(m.stitchId)!, x + (m.x - region.x) * size, y + (region.y + region.height - m.y - 1) * size, defs.get(m.stitchId)!.span * size, size)
   ctx.strokeStyle = '#aaa398'; ctx.lineWidth = 1; ctx.beginPath()
   for (let i = 0; i <= region.width; i++) { ctx.moveTo(x + i * size, y); ctx.lineTo(x + i * size, y + region.height * size) }
   for (let i = 0; i <= region.height; i++) { ctx.moveTo(x, y + i * size); ctx.lineTo(x + region.width * size, y + i * size) } ctx.stroke()
   ctx.strokeStyle = '#3b6655'; ctx.lineWidth = 2
   for (const shape of data.shapes) {
-    let points = shape.type === 'path' ? flattenPath(shape) : shape.type === 'polygon' || shape.type === 'triangle' ? shape.points : null
+    let points = contours.get(shape.id)?.points ?? (shape.type === 'path' ? flattenPath(shape) : shape.type === 'polygon' || shape.type === 'triangle' ? shape.points : null)
     if (shape.type === 'rectangle') points = [{ x: shape.x, y: shape.y }, { x: shape.x + shape.widthCm, y: shape.y }, { x: shape.x + shape.widthCm, y: shape.y + shape.heightCm }, { x: shape.x, y: shape.y + shape.heightCm }]
     if (shape.type === 'circle' || shape.type === 'ellipse') points = Array.from({ length: 121 }, (_, i) => ({ x: shape.center.x + (shape.type === 'circle' ? shape.radiusCm : shape.radiusXcm) * Math.cos(i * Math.PI / 60), y: shape.center.y + (shape.type === 'circle' ? shape.radiusCm : shape.radiusYcm) * Math.sin(i * Math.PI / 60) }))
     if (!points) continue
     ctx.beginPath(); points.forEach((p, i) => { const px = x + (p.x / data.gauge.stitchWidthCm - region.x) * size, py = y + (region.y + region.height - p.y / data.gauge.rowHeightCm) * size; if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py) }); ctx.closePath(); ctx.stroke()
   }
   ctx.restore(); font(ctx, Math.max(12, Math.min(20, size * 0.6)))
-  for (let i = 0; i < region.width; i++) ctx.fillText(String(region.x + i + 1), x + i * size + 2, y + region.height * size + 6)
+  for (let i = 0; i < region.width; i++) ctx.fillText(String(region.x + i + 1), x + i * size + 2, y + region.height * size + outlinePad + 6)
   for (let i = 0; i < region.height; i++) ctx.fillText(String(region.y + region.height - i), x - 42, y + i * size + 4)
 }
 function textHeight(ctx: CanvasRenderingContext2D, text: string, width: number, size: number): number {
@@ -68,11 +76,13 @@ function legend(ctx: CanvasRenderingContext2D, defs: StitchDefinition[], x: numb
 function heading(ctx: CanvasRenderingContext2D, data: DrawingExport, caption: string) {
   font(ctx, 28, true); ctx.fillText(data.name.slice(0, 50), 52, 28)
   font(ctx, 18); ctx.fillText(caption, 52, 70)
-  wrap(ctx, data.drawing.convention === 'appearance' ? '图符表示织物正面外观。片织：奇数行从右往左，偶数行从左往右；反面行上下针反读。方向性动作结合针法说明。' : '图符表示每行实际执行的针法。片织：奇数行从右往左，偶数行从左往右。', 52, 104, ctx.canvas.width - 104, 17)
+  const readingHeight = wrap(ctx, data.drawing.convention === 'appearance' ? '图符表示织物正面外观。片织：奇数行从右往左，偶数行从左往右；反面行上下针反读。方向性动作结合针法说明。' : '图符表示每行实际执行的针法。片织：奇数行从右往左，偶数行从左往右。', 52, 104, ctx.canvas.width - 104, 17)
+  if (data.drawing.generatedShapeIds.length) wrap(ctx, CONTOUR_DISPLAY_NOTE, 52, 110 + readingHeight, ctx.canvas.width - 104, 16)
 }
 export async function drawingPng(data: DrawingExport): Promise<Blob> {
   if (data.calculation.issues.length) throw Error(data.calculation.issues[0])
   const defs = stitchMap(data.drawing.definitions), used = usedDefinitions(data), region = bounds(data.calculation.marks, defs)
+  const contours = exportContours(data)
   const cell = Math.min(40, Math.max(16, Math.floor(6000 / Math.max(region.width, region.height))))
   const c = document.createElement('canvas'); const measure = c.getContext('2d')!
   const columns = legendChunks(measure, used, 340, 3520)
@@ -80,7 +90,7 @@ export async function drawingPng(data: DrawingExport): Promise<Blob> {
   if (c.width > 8192 || c.height > 8192 || c.width * c.height > 32_000_000) throw Error('图解较大，请使用分页 PDF 导出，保留可读的图符和中文图例。')
   const ctx = c.getContext('2d')!; ctx.fillStyle = '#fffdf8'; ctx.fillRect(0, 0, c.width, c.height)
   heading(ctx, data, `绘图图解（针行标号为画布坐标） · ${region.width} 针格 × ${region.height} 行 · 格尺寸 ${(region.width * data.gauge.stitchWidthCm).toFixed(1)} × ${(region.height * data.gauge.rowHeightCm).toFixed(1)} cm`)
-  drawChart(ctx, data, region, 58, 210, cell)
+  drawChart(ctx, data, region, 58, 210, cell, contours)
   for (let col = 0; col < columns.length; col++) legend(ctx, columns[col], 100 + region.width * cell + col * 360, 180, 340, data.drawing.convention)
   return new Promise((resolve, reject) => c.toBlob(b => b ? resolve(b) : reject(Error('图片生成失败')), 'image/png'))
 }
@@ -88,6 +98,7 @@ export async function drawingPdf(data: DrawingExport): Promise<Uint8Array> {
   if (data.calculation.issues.length) throw Error(data.calculation.issues[0])
   const { PDFDocument } = await import('pdf-lib'); const pdf = await PDFDocument.create()
   const defs = stitchMap(data.drawing.definitions), used = usedDefinitions(data), region = bounds(data.calculation.marks, defs)
+  const contours = exportContours(data)
   const chartColumns = 26, chartRows = 32
   const pages = Math.ceil(region.width / chartColumns) * Math.ceil(region.height / chartRows)
   if (pages > 1000) throw Error('图解分页超过 1000 页，请缩小导出设计范围。')
@@ -103,7 +114,7 @@ export async function drawingPdf(data: DrawingExport): Promise<Uint8Array> {
     const tile = { x: region.x + x, y: region.y + y, width: Math.min(chartColumns, region.width - x), height: Math.min(chartRows, region.height - y) }
     const localDefs = [...new Set(data.calculation.marks.filter(m => m.y >= tile.y && m.y < tile.y + tile.height && m.x + defs.get(m.stitchId)!.span > tile.x && m.x < tile.x + tile.width).map(m => m.stitchId))].map(id => defs.get(id)!)
     const current = ++number
-    await page(ctx => { heading(ctx, data, `绘图 ${current}/${pages} · 画布第 ${tile.x + 1}–${tile.x + tile.width} 针格 · 第 ${tile.y + 1}–${tile.y + tile.height} 行`); drawChart(ctx, data, tile, 58, 220, 30); const local = legendChunks(ctx, localDefs, 298, 1300)[0] ?? []; legend(ctx, local, 890, 240, 298, data.drawing.convention); if (local.length < localDefs.length) wrap(ctx, '其余针法见后附完整中文图例。', 890, 1580, 298, 16); wrap(ctx, '跨页的跨针图符须连同相邻页面查看。', 58, 1620, 780, 16); font(ctx, 16); ctx.fillText('完整针法图例与针数核对见后续页面。', 58, 1660) })
+    await page(ctx => { heading(ctx, data, `绘图 ${current}/${pages} · 画布第 ${tile.x + 1}–${tile.x + tile.width} 针格 · 第 ${tile.y + 1}–${tile.y + tile.height} 行`); drawChart(ctx, data, tile, 58, 220, 30, contours); const local = legendChunks(ctx, localDefs, 298, 1300)[0] ?? []; legend(ctx, local, 890, 240, 298, data.drawing.convention); if (local.length < localDefs.length) wrap(ctx, '其余针法见后附完整中文图例。', 890, 1580, 298, 16); wrap(ctx, '跨页的跨针图符须连同相邻页面查看。', 58, 1620, 780, 16); font(ctx, 16); ctx.fillText('完整针法图例与针数核对见后续页面。', 58, 1660) })
   }
   const measureCanvas = document.createElement('canvas'), measureContext = measureCanvas.getContext('2d')!
   const chunks = legendChunks(measureContext, used, 530, 1460)

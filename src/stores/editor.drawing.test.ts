@@ -10,6 +10,28 @@ const mark = (x: number, y: number, stitchId = 'knit'): StitchMark => ({ id: `${
 beforeEach(() => { setActivePinia(createPinia()); vi.useFakeTimers(); vi.stubGlobal('window', { localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} }, addEventListener: () => {}, removeEventListener: () => {} }) })
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
 describe('绘图与方案联动', () => {
+  it('圆滑与原边缘查看不改针格计算或存档，预览确认与撤销仍是原有边界', () => {
+    const store = useEditorStore()
+    store.paintDrawing([mark(3, 3), mark(4, 3), mark(3, 4), mark(4, 4)])
+    const beforePreview = JSON.stringify(store.readProjectSource()!.document)
+    store.requestDrawingContours()
+    expect(store.drawingPreviewDisplays[0].path.nodes.some(n => n.inControl)).toBe(true)
+    expect(JSON.stringify(store.readProjectSource()!.document)).toBe(beforePreview)
+    store.generateDrawingContours()
+    const saved = JSON.stringify(store.readProjectSource()!.document)
+    const rows = JSON.stringify(store.shapePlans.map(p => p.rasterRows))
+    const calculation = JSON.stringify(calculateDrawing(store.drawing, store.shapePlans, store.gauge, store.fabricGrid))
+    expect(store.drawingContourDisplays[0].fallback).toBeNull()
+    expect(store.shapes[0].type === 'path' && store.shapes[0].nodes.every(n => !n.inControl && !n.outControl)).toBe(true)
+    store.showDrawingEdges = true
+    expect(JSON.stringify(store.readProjectSource()!.document)).toBe(saved)
+    expect(JSON.stringify(store.shapePlans.map(p => p.rasterRows))).toBe(rows)
+    expect(JSON.stringify(calculateDrawing(store.drawing, store.shapePlans, store.gauge, store.fabricGrid))).toBe(calculation)
+    store.undo(); expect(store.shapes).toHaveLength(0); expect(store.drawingContourDisplays).toHaveLength(0)
+    store.redo(); expect(store.drawingContourDisplays).toHaveLength(1)
+    store.createProject(); expect(store.showDrawingEdges).toBe(false)
+    store.$dispose()
+  })
   it('连续填针一笔撤销，花样放置预览取消不改存档', () => {
     const store = useEditorStore(); store.paintDrawing([mark(1, 1), mark(2, 1)])
     expect(store.drawing.marks).toHaveLength(2); store.undo(); expect(store.drawing.marks).toHaveLength(0); store.redo()

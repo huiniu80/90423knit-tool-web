@@ -5,6 +5,7 @@ import { calculateDrawing } from '../core/drawing/calculation'
 import { intersects } from '../core/drawing/drawing'
 import type { DrawingTool } from '../core/drawing/types'
 import StitchSymbol from './StitchSymbol.vue'
+import { CONTOUR_DISPLAY_NOTE } from '../core/drawing/contourDisplay'
 const emit = defineEmits<{ library: [] }>()
 const store = useEditorStore(), showRows = ref(false)
 const calculation = computed(() => calculateDrawing(store.drawing, store.shapePlans, store.gauge, store.fabricGrid))
@@ -21,6 +22,11 @@ function position(axis: 'x' | 'y', e: Event) { const n = Number((e.target as HTM
     <label class="convention-label">图符读法<select :value="store.drawing.convention ?? ''" @change="store.setDrawingConvention(($event.target as HTMLSelectElement).value as 'appearance' | 'operation')"><option disabled value="">请选择正反面表达方式</option><option value="appearance">表示正面外观，反面行反读上下针</option><option value="operation">表示每行实际执行的针法</option></select></label>
     <p v-if="store.drawing.convention === 'appearance'">图符表示织物正面外观：平针各行画下针，正面织下针、反面织上针。逐行表显示实际操作。</p>
     <p>鼠标、笔或单指点按／拖动填格，双指平移缩放。先画轮廓时，内部默认下针，可逐格修改；先填针法时，填好后点“生成轮廓”。</p>
+    <div v-if="store.drawingContourDisplays.length || store.drawingPreviewDisplays.length" class="contour-display-controls">
+      <p>{{ CONTOUR_DISPLAY_NOTE }}</p>
+      <button type="button" :aria-pressed="store.showDrawingEdges" @click="store.showDrawingEdges = !store.showDrawingEdges">{{ store.showDrawingEdges ? '隐藏实际针格边缘' : '查看实际针格边缘' }}</button>
+      <p v-if="[...store.drawingContourDisplays, ...store.drawingPreviewDisplays].some(c => c.fallback)" role="status">部分边缘距离过近或形状复杂，保留实际边缘。可点“查看实际针格边缘”检查。</p>
+    </div>
     <div v-if="store.contourPreview && store.contourCandidate" class="drawing-preview-banner" role="status"><span>沿填充生成 {{ store.contourCandidate.loops.length }} 个轮廓，内部补 {{ store.contourCandidate.automatic.length }} 针下针；保留手绘路径。</span><button @click="store.generateDrawingContours()">确认生成／更新轮廓</button><button @click="store.clearDrawingContours()">取消</button></div>
     <div v-if="store.placementPreview" class="drawing-preview-banner" role="status"><strong>放置预览 · {{ store.placementPreview.name }}</strong><span>红框为替换位置：{{ replacements }} 个完整操作。点击或拖动针格定位。</span><div class="drawing-fields"><label>起始针格<input type="number" min="1" :value="store.placementPreview.x + 1" @change="position('x', $event)" /></label><label>起始行<input type="number" min="1" :value="store.placementPreview.y + 1" @change="position('y', $event)" /></label></div><button @click="store.confirmPlacement()">{{ replacements ? '确认覆盖并放置' : '确认放置' }}</button><button @click="store.cancelDrawingPreview()">取消预览</button></div>
     <details v-if="calculation.issues.length" class="drawing-issues"><summary>需要核对 {{ calculation.issues.length }} 项</summary><p v-for="issue in calculation.issues.slice(0, 20)" :key="issue">{{ issue }}</p></details>

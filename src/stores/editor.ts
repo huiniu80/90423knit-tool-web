@@ -54,6 +54,7 @@ import type { DrawingDocument, DrawingTool, PatternPlacement, PatternSample, Sti
 import { effectiveMarks, filledRegion, intersects, isDrawingDocument, replaceMarks, traceContours, uid } from '../core/drawing/drawing'
 import { stitchMap } from '../core/drawing/stitches'
 import { completeDrawingMarks, drawingBaseMarks } from '../core/drawing/chart'
+import { drawingContourDisplays as createContourDisplays } from '../core/drawing/contourDisplay'
 
 export type ProjectImportResult =
   | { status: 'imported'; projectId: string }
@@ -398,6 +399,14 @@ export const useEditorStore = defineStore('editor', () => {
   }
   const drawingBase = computed(() => drawingBaseMarks(shapePlans.value, gauge.value))
   const drawingDisplayMarks = computed(() => completeDrawingMarks(drawingBase.value, drawingMarks.value, drawingDefinitions.value))
+  const showDrawingEdges = ref(false)
+  const generatedIdKey = computed(() => JSON.stringify(drawing.value.generatedShapeIds))
+  const generatedDrawingPaths = computed(() => {
+    const ids = new Set<string>(JSON.parse(generatedIdKey.value))
+    return shapes.value.filter((s): s is PathShape => ids.has(s.id) && s.type === 'path' && s.closed)
+  })
+  const drawingContourDisplays = computed(() => createContourDisplays(generatedDrawingPaths.value, gauge.value))
+  const drawingPreviewDisplays = computed(() => !contourPreview.value || !contourCandidate.value ? [] : createContourDisplays(contourCandidate.value.loops.map((loop, i) => ({ id: `preview-${i}`, type: 'path', closed: true, nodes: loop.map(p => ({ anchor: { x: p.x * gauge.value.stitchWidthCm, y: p.y * gauge.value.rowHeightCm } })) })), gauge.value))
 
   function captureDrawingSample(x: number, y: number, width: number, height: number): PatternSample | null {
     if (width < 1 || height < 1 || width > 64 || height > 64) return null
@@ -924,6 +933,7 @@ export const useEditorStore = defineStore('editor', () => {
   function applyProjectDocument(document: PersistedEditorDocument): void {
     drawing.value = clonePlain(document.drawing ?? emptyDrawing())
     activeStitchId.value = 'knit'
+    showDrawingEdges.value = false
     cancelDrawingPreview()
     consumeRasterRuleNotice(document)
     autoSave.schedule()
@@ -1229,6 +1239,7 @@ export const useEditorStore = defineStore('editor', () => {
 
   return {
     drawing, drawingTool, activeStitchId, drawingDefinitions, drawingMarks, drawingBase, drawingDisplayMarks,
+    drawingContourDisplays, drawingPreviewDisplays, showDrawingEdges,
     placementPreview, movingPlacementId, contourPreview, contourCandidate,
     paintDrawing, eraseDrawing, saveSample, deleteSample, startPlacement, confirmPlacement,
     cancelDrawingPreview, removePlacement, saveCustomStitch, setDrawingConvention, generateDrawingContours,
